@@ -1,4 +1,23 @@
-# ai-project-template-adapter
+# Durly
+
+**Smart Battery Care for Mac**
+
+Durly is a planned **native, free and open-source macOS menu bar app** focused on **maximizing MacBook battery lifespan** through intelligent charging, monitoring and safe battery care. It is intended to be a simpler, more automated alternative to AlDente—not merely a charge limiter.
+
+- **Native macOS:** Swift, SwiftUI and AppKit where needed for older versions; no Electron.
+- **Older Macs first:** initial validation target is **MacBook Pro 15-inch Mid 2015 (MacBookPro11,5) on macOS Monterey 12.7.6**. Big Sur and Catalina compatibility will be investigated rather than assumed.
+- **Intel and Apple Silicon:** hardware-specific capability detection; unsupported controls fall back to read-only operation.
+- **Battery longevity:** configurable charging limits, smart profiles, cautious holding/discharge controls, thermal protection, diagnostics and capacity history.
+- **Safety:** no forced discharge or calibration on a battery reporting faults or unexpected shutdowns.
+- **Local-first:** offline core functionality, minimal resource use, no account required.
+
+> **Project status:** Requirements and feasibility research. Features described above are planned, not yet implemented or verified on all hardware.
+
+**[Read the detailed product requirements](docs/product-requirements.md)** · **[Roadmap](.ai/project/roadmap.md)**
+
+---
+
+## Development workflow template
 
 Public GitHub template for using the private `szymoniwacz/ai-project-template` workflow without publishing its reusable workflow files.
 
