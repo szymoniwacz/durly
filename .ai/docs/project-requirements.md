@@ -2,7 +2,7 @@
 
 ## Summary
 
-Durly is a free, native macOS menu bar battery-longevity tool for MacBook owners, initially validated on Intel Monterey. The detailed product specification is [docs/product-requirements.md](../../docs/product-requirements.md). The active milestone is [scope](../project/scope.md); future features in the product specification are not MVP commitments.
+Durly is a free, native macOS menu bar battery-longevity tool for MacBook owners, initially targeting validation on Intel Monterey. The detailed product specification is [docs/product-requirements.md](../../docs/product-requirements.md). The active milestone is [scope](../project/scope.md); future features in the product specification are not MVP commitments.
 
 ## Users and outcomes
 
@@ -85,17 +85,17 @@ See [scope](../project/scope.md) and [roadmap](../project/roadmap.md). Release g
 
 | Check | Result | Notes |
 |---|---|---|
-| Definition coverage complete | recorded | 26 areas classified; owner review pending |
+| Definition coverage complete | recorded | 26 areas classified; reviewed against project definition contract |
 | No `blocking-question` remains | recorded | Control-specific questions deferred to #3; no control implementation before resolution |
 | All `deferred` items have reason and return trigger | recorded | See decision status |
-| Template customization complete | pending | Validate integrated bootstrap PR |
+| Template customization complete | pass | Project-owned overlay, README and AGENTS customized; local doctor and leak check passed at c750a03 |
 | Stack profile selected or marked N/A | N/A | Project-specific stack guidance above |
 | Real project commands recorded | deferred | Greenfield exception; #4 owns actual application commands |
 | Root README describes the product | recorded | README |
 | `AGENTS.md` describes repository role | recorded | AGENTS.md |
-| Bootstrap markers removed | pending | Check materialized project overlay locally |
+| Bootstrap markers removed | pass | Reviewed tracked project definition files; no bootstrap placeholders remain in changed project documents |
 | License and ownership decided | recorded | Existing LICENSE |
-| CI, branch rules, and approvals decided | pending | Linux-only change requires CI and owner review |
-| Project ready for first product task | pending | Bootstrap validation and owner review required |
+| CI, branch rules, and approvals decided | pass | #11 merged; Linux-only CI and owner review/merge rules recorded |
+| Project ready for first product task | conditional | Definition and local bootstrap checks passed; requires green final PR CI and owner merge of #12 before implementation |
 
 Product implementation is not authorized by this document alone. Readiness must be confirmed before product work.
