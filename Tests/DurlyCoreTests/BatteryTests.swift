@@ -6,6 +6,27 @@ import XCTest
 import DurlyCore
 
 final class BatteryTests: XCTestCase {
+    func testHistoryCaptureRequiresConfirmationAndBoundsSampling() {
+        var gate = HistoryCapture()
+        let t = Date(timeIntervalSince1970: 1000)
+        func sample(_ offset: Double, _ ac: Bool) -> BatterySnapshot {
+            BatteryDecoder.decode(registry: ["ExternalConnected": ac],
+                powerSource: ["Current Capacity": 80, "Max Capacity": 100],
+                capturedAt: t.addingTimeInterval(offset))
+        }
+        let first = sample(0, true)
+        XCTAssertFalse(gate.shouldCapture(first, uptime: 100, now: t))
+        gate.select(UUID())
+        XCTAssertTrue(gate.shouldCapture(first, uptime: 100, now: t))
+        gate.recorded(first, uptime: 100)
+        XCTAssertFalse(gate.shouldCapture(sample(10, true), uptime: 110, now: t.addingTimeInterval(10)))
+        XCTAssertTrue(gate.shouldCapture(sample(10, false), uptime: 110, now: t.addingTimeInterval(10)))
+        XCTAssertTrue(gate.shouldCapture(sample(60, true), uptime: 160, now: t.addingTimeInterval(60)))
+        XCTAssertFalse(gate.shouldCapture(first, uptime: 161, now: t.addingTimeInterval(61)))
+        gate.suspend()
+        XCTAssertFalse(gate.shouldCapture(sample(60, true), uptime: 160, now: t.addingTimeInterval(60)))
+    }
+
     func testHistoryPersistenceAndEpochSeparation() {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".sqlite")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -19,6 +40,8 @@ final class BatteryTests: XCTestCase {
             try store.append(old, epoch: a)
             try store.append(new, epoch: b)
             let reopened = try BatteryHistory(url: url)
+            let latest = try reopened.latestEpoch()
+            XCTAssertEqual(latest, b)
             let oldSamples = try reopened.samples(epoch: a)
             let newSamples = try reopened.samples(epoch: b)
             XCTAssertEqual(oldSamples, [old])
