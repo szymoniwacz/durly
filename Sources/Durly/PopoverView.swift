@@ -178,7 +178,11 @@ struct PopoverView: View {
                             metric("Voltage", number(sample.voltageMillivolts, " mV"))
                             metric("Cycles", number(sample.cycles))
                             metric("AC / Charging", yesNo(sample.externalPower) + " / " + yesNo(sample.isCharging))
-                            metric("Health", sample.condition ?? "Unavailable")
+                            Group {
+                                metric("Health", sample.condition ?? "Unavailable")
+                                metric("Raw charge ratio", decimal(sample.rawChargePercentage, "%"))
+                                metric("Capacity retention", decimal(sample.capacityRetention, "%"))
+                            }
                         }.padding(.vertical, 4)
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
@@ -245,7 +249,7 @@ struct PopoverView: View {
                     Text("\(seconds) seconds").tag(seconds)
                 }
             }
-            Text("Settings are saved automatically on this Mac. They affect display only.")
+            Text("Settings are saved automatically on this Mac. History checks telemetry at least every 5 seconds while awake.")
                 .font(.caption).foregroundColor(.secondary)
             Button("Back") { showSettings = false }
         }
