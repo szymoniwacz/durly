@@ -6,11 +6,11 @@ Durly is a free, native macOS menu bar battery-longevity tool for MacBook owners
 
 ## Users and outcomes
 
-Desk and mixed-use MacBook owners need reliable battery visibility, safe charging limits where supported and predictable recovery. Success is a locally runnable application with accurate available telemetry, explicit limitations and no unverified control.
+Desk and mixed-use MacBook owners need reliable battery visibility, historical analysis and actionable warnings. Success is a locally runnable application with accurate available telemetry, explicit limitations and no unverified control.
 
 ## Core workflows
 
-Launch → detect hardware → display telemetry and support state → adjust settings → optionally enable validated charge control → pause or recover → export sanitized diagnostics.
+Launch → detect battery epoch → capture telemetry → persist history → analyze → display findings/alerts → export sanitized diagnostics. No hardware writes in active milestone.
 
 ## Functional requirements
 
@@ -19,10 +19,15 @@ Launch → detect hardware → display telemetry and support state → adjust se
 | FR-001 | Read available charge, source, cycles, capacity, health and optional reliable sensors | must | #4 |
 | FR-002 | Native menu bar UI and persisted settings | must | #5 |
 | FR-003 | Detect support and use read-only fallback | must | #3, #6 |
-| FR-004 | Verified reversible charge limit, pause and basic hysteresis | conditional on GO | #3, #6, #7 |
+| FR-004 | Verified reversible charge limit and later hysteresis | deferred; separate approval | #3, #6, #7 |
 | FR-005 | Sanitized diagnostics and recovery documentation | must | #8 |
 | FR-006 | Opt-in launch at login | optional | #8 |
-| FR-007 | Local tests, safety gate and runnable Release app | must | #9, #10 |
+| FR-007 | Local tests, monitoring safety gate and runnable Release app | must | #9, #10 |
+| FR-008 | Persistent battery history and separate battery epochs | must | #19 |
+| FR-009 | Extended verified telemetry | must | #20 |
+| FR-010 | Deterministic analytics and anomalies with coverage | must | #21 |
+| FR-011 | Actionable alerts and recommendations without hardware changes | must | #22 |
+| FR-012 | Native history dashboard and usage insights | planned for v0.1.0 | #23 |
 
 ## Inputs, outputs and integrations
 
@@ -43,7 +48,7 @@ Mockable providers and deterministic policy tests; accurate missing-data handlin
 | SMC support unknown | #3 establishes GO/NO-GO, fallback on uncertainty |
 | Battery service warning and low reported capacity | Read-only first; no forced discharge or calibration |
 | Local SDK 13.1 and Swift 5.7 toolchain | Import smoke test passed; full app build in #4 |
-| Crash/sleep/reboot behavior unknown | #9 validates before enabling release control |
+| Crash/sleep/reboot behavior unknown | #9 validates monitoring and history continuity; control deferred |
 | One-day delivery target | Reduce to safe monitoring-only build rather than bypass gates |
 
 ## First useful version and later versions
@@ -56,28 +61,28 @@ See [scope](../project/scope.md) and [roadmap](../project/roadmap.md). Release g
 |---|---|---|---|
 | Product purpose | decided | Battery longevity manager | vision; product spec §1 |
 | Users | decided | MacBook owners, desk/mixed/mobile | product spec §3 |
-| Outcomes | decided | Reliable telemetry and safe control | FR-001–007 |
+| Outcomes | decided | Reliable telemetry, history, analytics and actionable alerts | FR-001–012 |
 | Success criteria | decided | Local app and evidence-backed release gate | #9, #10 |
-| First useful version | decided | Monitoring plus conditional verified charge limit | scope |
+| First useful version | decided | Monitoring, history, analytics and alerts only | scope |
 | Non-goals | decided | No rejuvenation, unsafe discharge or broad compatibility claims | scope; spec §9 |
-| Interfaces | decided | Menu bar, preferences, diagnostics | FR-001–005 |
+| Interfaces | decided | Menu bar, preferences, history dashboard and diagnostics | FR-001–012 |
 | Inputs and outputs | decided | Local battery telemetry, preferences, export | Inputs section |
-| Architecture shape | decided | UI, telemetry, policy, isolated backend and fallback | spec §6; #3 for helper choice |
+| Architecture shape | decided | UI, telemetry, local history, analytics and advisory alerts; isolated control backend deferred | spec §6; #19–#23 |
 | Boundaries | decided | OS safeguards retained; no unsupported writes | spec §7 |
-| Storage and data ownership | decided | Local settings and explicit diagnostics; user owns data | spec §6 |
-| Retention and migrations | deferred | No history database in MVP; migration design not needed for research/scaffold | Revisit before persistent history or incompatible settings schema |
+| Storage and data ownership | decided | Local settings, SQLite history (validate in #19), and explicit diagnostics; user owns data | spec §6 |
+| Retention and migrations | decided | Versioned history schema; no automatic deletion in first increment; deliberate export/deletion; later retention policy | #19 |
 | Integrations and failure handling | decided | IOKit; conditional SMC; fail-safe fallback | #3, #6 |
 | Authentication and authorization | deferred | No app accounts; privileged helper choice requires device evidence; does not block read-only research | #3 before any privileged control |
 | Secrets, privacy, and sensitive data | decided | Offline; omit identifiers; private workflow not committed | spec §§6–7 |
 | Language, framework, and dependencies | decided | Swift 5.7, local swiftc/CLT, Linux SwiftPM, SwiftUI/AppKit, IOKit | D-01 |
 | Environments and deployment | decided | Local Monterey build, Linux CI, local Release app | D-01, D-02 |
-| Configuration | decided | Local preferences, validated thresholds, opt-in control | #5, #7 |
+| Configuration | decided | Local preferences, advisory thresholds; control deferred | #5, #7 |
 | Logging, monitoring, and errors | decided | Local visible errors and sanitized diagnostics | #8 |
 | Tests, lint, typecheck, performance | decided | Local build/test scripts, portable Linux checks, measure footprint locally | #4, #9 |
 | Scale, reliability, and cost | decided | Single local user, no server, minimal resource use | spec §8 |
 | Supported platforms and compatibility | decided | Intel MacBookPro11,5 / Monterey 12.7.6 first | D-01; #3 |
 | Accessibility and localization | decided | Native accessible controls and localization-ready strings; translations later | spec §5 |
-| Compliance, backup, and recovery | decided | No cloud data; documented safe restore/uninstall; MIT obligations | spec §7; #6, #8 |
+| Compliance, backup, and recovery | decided | No cloud data; documented monitoring uninstall and deliberate history retention/deletion; later safe restore; MIT obligations | spec §7; #6, #8 |
 | Branching, CI, release, and rollback | decided | Scoped PRs, owner review, Linux CI, recovery gate | D-02, D-05; #9, #10 |
 | License, ownership, and documentation expectations | decided | Existing MIT license and copyright retained; accurate docs | ../../LICENSE |
 

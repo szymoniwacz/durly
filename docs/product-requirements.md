@@ -1,8 +1,18 @@
 # Durly — Product Requirements Specification
 
-**Status:** Proposed · **Version:** 0.1 · **Date:** 2026-11-03  
+**Status:** Active monitoring milestone; later control features proposed · **Version:** 0.2 · **Date:** 2026-11-26  
 **Product:** Durly — Smart Battery Care for Mac  
 **Source of truth:** This document defines the intended product, not a claim that features already work.
+
+## Active release boundary (owner decision, 2026-11-26)
+
+v0.1.0 is strictly read-only: automatic collection, per-battery history, analytics, anomalies, alerts, recommendations and native dashboard. No manual or automatic charging changes, no root helper, no forced discharge or calibration. Existing research and simulation remain preserved. Later control sections below describe future intent only, not MVP requirements or authorization.
+
+Start history using verified existing telemetry before extending sensors. The current battery is degraded and replacement is planned for 2026-11-27. Keep battery epochs separate, use a local random identifier and explicit replacement confirmation when uncertain. Record first valid observation as a baseline, not a factory measurement. Never infer replacement solely from capacity or cycles.
+
+History uses local SQLite subject to CLT linkage validation, versioned schema, transactional persistence, deliberate export/deletion, no automatic deletion in the first increment. Initial historical cadence: 60 seconds while awake and app running plus meaningful power transitions; never wake the Mac for measurements. Preserve source, missing fields and unknown gaps; no raw serials in exports. Analytics use time-weighted observed intervals, report coverage, distinguish estimated throughput from firmware cycles and do not extrapolate short trends to lifetime. Alert rules require persistence, deduplication, uncertainty and actionable guidance. All recommendations are read-only.
+
+See #19–#23, #8–#10 and the [roadmap](../.ai/project/roadmap.md). Proposed later versions: v0.2.0 explicit manual care after safety gates; v0.3.0 shadow simulation followed by separately authorized automatic care.
 
 ## 1. Vision and success criteria
 
@@ -57,8 +67,8 @@ An unsupported control must be hidden or clearly disabled with an explanation; r
 ### First-run experience
 1. Detect Mac model, macOS version, battery telemetry, available control features and limitations.
 2. Explain the objective: **long-term battery health**, not maximum hours per charge.
-3. Offer **Smart Battery Care** as the sensible default and manual mode for advanced users.
-4. Ask permission for privileged actions only when actually needed, and explain why.
+3. Start in monitoring mode, explain history and battery identity; later offer Smart Battery Care and manual mode only after validation.
+4. In v0.1.0 ask only for optional notification permissions; future privileged actions require separate approval.
 5. Never silently write unsupported SMC keys or begin a discharge cycle.
 6. Offer a read-only mode if control cannot be safely established.
 
@@ -74,14 +84,14 @@ Priority key: **P0** = MVP/core; **P1** = planned; **P2** = exploratory or hardw
 - Be resilient to missing keys, stale values, unexpected sensor readings and battery replacement.
 - Avoid treating the macOS percentage indicator as a precise measure of stored energy.
 
-### 4.2 Charge limit — P0, hardware permitting
+### 4.2 Charge limit — deferred, hardware permitting
 - Allow a configurable upper charge limit (e.g. 80%) and optionally an adjustable lower bound.
 - Stop charging at the chosen threshold and resume according to safe, tested hysteresis behavior.
 - Provide clear state: charging / holding / discharging / on AC / unsupported / error.
 - Provide a visible one-click **Pause / Resume Durly control** and safe recovery.
 - A configured limit must not imply a guarantee that physical charging stops on every Mac model, especially while sleeping or powered off.
 
-### 4.3 Smart Battery Care — P0/P1
+### 4.3 Smart Battery Care — deferred control; advisory analytics in v0.1.0
 - One-toggle mode that selects a conservative policy based on profile and observed usage, without surprising the user.
 - Profiles: **Desk**, **Mixed**, **Mobile**, and **Manual**.
 - Example starting limits of **70%, 80%, 90%** are *illustrative*, not universally optimal. Configurable and subject to validation.
@@ -90,10 +100,10 @@ Priority key: **P0** = MVP/core; **P1** = planned; **P2** = exploratory or hardw
 - Let user override automatic decisions; show why a change was made.
 - Model future battery demand conservatively rather than claiming to predict travel.
 
-### 4.4 Temperature protection — P0/P1
-- Monitor relevant battery temperature where available; otherwise state that temperature protection is unavailable.
-- Suspend or limit charging where verified safe when a configured safety threshold is crossed.
-- Restore regular policy with hysteresis after cooling.
+### 4.4 Temperature protection — P0 monitoring/alerts; control deferred
+- Monitor relevant battery temperature where available; otherwise state that temperature monitoring is unavailable.
+- In v0.1.0 warn on persistent unfavorable temperature; future charge suspension requires verified safe control.
+- Resolve advisory alerts after cooling with hysteresis; future charge-policy restoration is deferred.
 - Avoid claiming the app can physically cool a battery or override Apple's internal protection.
 - Never rely on Durly as a replacement for hardware safeguards.
 
@@ -124,7 +134,7 @@ Priority key: **P0** = MVP/core; **P1** = planned; **P2** = exploratory or hardw
 - Do not perform calibration on batteries reporting service needs, unexpected shutdowns, severe percentage jumps, or other safety concerns.
 - If impossible to safely automate, provide read-only guidance rather than forcing an operation.
 
-### 4.9 Diagnostics, alerts and history — P1
+### 4.9 Diagnostics, alerts and history — P0 (dashboard P1)
 - Record periodic local snapshots (time, source, charge, cycles, capacity, charging state, available temperature/voltage).
 - Display capacity trend and estimated degradation over weeks/months; highlight measurement uncertainty, recalibration and battery replacement.
 - Notify only on actionable events: abnormal capacity changes, temperature, service condition, charge-control failure, repeated shutdown symptoms.
@@ -226,10 +236,10 @@ DurlyApp (SwiftUI + AppKit status item)
 - Launch as menu bar app on the validated oldest target macOS.
 - Read battery charge, capacity, cycles, health state and external power.
 - Display clear availability and errors, support read-only fallback and export basic diagnostics.
-- Implement a verified charging limit for at least one hardware/OS combination **only if** safe, reversible control is proven.
-- Include pause/resume and recovery guidance.
+- Implement persistent battery history, analytics, alerts, recommendations and dashboard. No charge control in v0.1.0.
+- Include monitoring uninstall and data-retention guidance.
 
-### Phase 2 — Longevity engine
+### Phase 2 — Longevity engine (later, separately authorized control)
 - Smart Battery Care, Desk/Mixed/Mobile profiles, configurable limits and hysteresis.
 - Reliable sleep/wake and restart behavior, low-overhead history and alerts.
 - Temperature-aware charging only where sensor/control reliability is validated.
