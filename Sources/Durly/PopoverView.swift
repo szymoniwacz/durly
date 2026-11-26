@@ -249,7 +249,7 @@ struct PopoverView: View {
                     Text("\(seconds) seconds").tag(seconds)
                 }
             }
-            Text("Settings are saved automatically on this Mac. History checks telemetry at least every 5 seconds while awake.")
+            Text("Settings are saved automatically on this Mac. History checks telemetry every 5 seconds while awake and saves only changes.")
                 .font(.caption).foregroundColor(.secondary)
             Button("Back") { showSettings = false }
         }
