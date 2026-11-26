@@ -78,6 +78,19 @@ public final class BatteryHistory {
         }
         return id
     }
+    public func latestEpoch() throws -> UUID? {
+        lock.lock(); defer { lock.unlock() }
+        return try statement("SELECT id FROM battery_epoch ORDER BY rowid DESC LIMIT 1") { stmt in
+            let result = sqlite3_step(stmt)
+            if result == SQLITE_DONE { return nil }
+            guard result == SQLITE_ROW, let value = sqlite3_column_text(stmt, 0),
+                  let id = UUID(uuidString: String(cString: value)) else {
+                throw HistoryError.unknownEpoch
+            }
+            return id
+        }
+    }
+
     // The caller must explicitly select a confirmed epoch. Never infer replacement
     // from capacity or cycles. A duplicate timestamp is rejected, not overwritten.
     public func append(_ sample: BatterySnapshot, epoch: UUID) throws {
