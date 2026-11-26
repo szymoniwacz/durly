@@ -114,6 +114,37 @@ final class BatteryTests: XCTestCase {
         XCTAssertEqual(BatteryHealthSeverity.classify(nil), .unknown)
     }
 
+    func testBatteryPresentationSymbolsAndPowerStates() {
+        for (value, symbol) in [(0, "battery.0"), (12, "battery.0"), (13, "battery.25"),
+                                (37, "battery.25"), (38, "battery.50"), (62, "battery.50"),
+                                (63, "battery.75"), (87, "battery.75"), (88, "battery.100"), (100, "battery.100")] {
+            XCTAssertEqual(BatteryPresentation.symbol(for: value), symbol)
+        }
+        XCTAssertEqual(BatteryPresentation.symbol(for: nil), "questionmark.circle")
+        XCTAssertEqual(BatteryPresentation.symbol(for: -1), "questionmark.circle")
+        XCTAssertEqual(BatteryPresentation.symbol(for: 101), "questionmark.circle")
+        func state(_ ac: Bool, _ charging: Bool) -> String {
+            BatteryPresentation.chargeState(for: BatteryDecoder.decode(
+                registry: ["ExternalConnected": ac, "IsCharging": charging], powerSource: [:]))
+        }
+        XCTAssertEqual(state(true, true), "Charging")
+        XCTAssertEqual(state(true, false), "On AC · Not charging")
+        XCTAssertEqual(state(false, false), "On battery")
+        XCTAssertEqual(state(false, true), "Power state unavailable")
+        XCTAssertEqual(BatteryPresentation.chargeState(for: nil), "Battery data unavailable")
+        XCTAssertEqual(BatteryPresentation.chargeState(for: BatteryDecoder.decode(registry: [:], powerSource: [:])), "Power state unavailable")
+    }
+
+    func testPresentationFreshnessTracksInterval() {
+        let now = Date(timeIntervalSince1970: 1000)
+        let snapshot = BatteryDecoder.decode(registry: [:], powerSource: [:], capturedAt: now)
+        let later = now.addingTimeInterval(20)
+        XCTAssertNil(BatteryPresentation.fresh(snapshot, settings: DisplaySettings(refreshSeconds: 10), at: later))
+        XCTAssertEqual(BatteryPresentation.fresh(snapshot, settings: DisplaySettings(refreshSeconds: 30), at: later), snapshot)
+        XCTAssertNil(BatteryPresentation.fresh(snapshot, settings: DisplaySettings(), at: now.addingTimeInterval(-1)))
+        XCTAssertNil(BatteryPresentation.fresh(nil, settings: DisplaySettings(), at: now))
+    }
+
     private final class MockProvider: BatteryProvider {
         let value: BatterySnapshot
         var shouldFail = false
