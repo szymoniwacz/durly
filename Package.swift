@@ -9,6 +9,6 @@ var targets: [Target] = [
 #if os(macOS)
 products.append(.executable(name: "Durly", targets: ["Durly"]))
 targets.append(.executableTarget(name: "Durly", dependencies: ["DurlyCore"],
-    linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("AppKit")]))
+    linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("AppKit"), .linkedFramework("SwiftUI")]))
 #endif
 let package = Package(name: "Durly", platforms: [.macOS(.v12)], products: products, targets: targets)
