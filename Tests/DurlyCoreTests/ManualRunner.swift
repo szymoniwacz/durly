@@ -16,14 +16,4 @@ func XCTAssertNil<T>(_ actual: T?, file: StaticString = #file, line: UInt = #lin
 func XCTAssertTrue(_ actual: Bool, file: StaticString = #file, line: UInt = #line) {
     precondition(actual, "Expected true", file: file, line: line)
 }
-@main
-struct ManualRunner {
-    static func main() {
-        let tests = BatteryTests()
-        tests.testSeparatesDisplayedAndRawPercentagesAndDecodesSignedCurrent()
-        tests.testMissingAndInvalidValuesAreNotInvented()
-        tests.testMockProviderAndStaleness()
-        print("PASS: 3 battery telemetry tests")
-    }
-}
 #endif
