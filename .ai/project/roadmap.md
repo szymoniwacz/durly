@@ -1,27 +1,24 @@
 # Durly Roadmap
 
-See [product requirements](../../docs/product-requirements.md) for acceptance criteria and detailed scope.
+See [product requirements](../../docs/product-requirements.md) and [scope](scope.md).
 
-## Current — Phase 0: Research
-- [ ] Verify battery telemetry via IOKit on MacBookPro11,5 + macOS 12.7.6.
-- [ ] Investigate minimum deployment target (Monterey baseline; Big Sur and Catalina if feasible).
-- [ ] Research safe Intel SMC/BCLM control and test reversibility.
-- [ ] Identify Apple's silicon-specific capabilities and constraints.
-- [ ] Establish model/OS/feature compatibility matrix.
-- [ ] Select signing, helper security and distribution strategy.
+## Completed foundations
+- #2 readiness; #3 conditional SMC feasibility (not production authorization); #4 telemetry; #5 native UI.
+- #16 and #17 merged partial #6: portable simulation and manual read-only SMC diagnostics.
 
-## Next — Phase 1: Safe native MVP
-- [ ] Native SwiftUI/AppKit menu bar application.
-- [ ] Display percentage, source, cycles, health and capacity.
-- [ ] Capability detection with read-only fallback.
-- [ ] Verified charge limiting with safe stop/recovery where supported.
-- [ ] Basic diagnostics export and user-facing status/errors.
-- [ ] Unit and integration tests with mock battery backend.
+## Active — v0.1.0 Monitoring & Analytics
+1. #19 Persistent history and battery identity — first priority, new battery planned 2026-11-27.
+2. #20 Extended read-only telemetry (independent of #19; additive history integration).
+3. #21 Analytics and anomaly detection (depends on #19 and #20).
+4. #22 Alerts and recommendations (depends on #21).
+5. #23 Dashboard and usage insights (depends on #21 and #22).
+6. #8 Diagnostics/export and optional startup (depends on #5, #19, #20).
+7. #9 Physical monitoring acceptance (depends on #8, #19–#23).
+8. #10 Monitoring-only release (depends on #9; owner approval).
 
-## Later
-- [ ] Smart Battery Care profiles and automatic policy engine.
-- [ ] Sailing range, optional safe discharge, Top Up and schedules.
-- [ ] Temperature protection, history, alerts, storage mode.
-- [ ] Cautious, conditional battery-gauge calibration.
-- [ ] CLI, Shortcuts and model-dependent MagSafe LED.
-- [ ] Validated Apple Silicon support and expanded older macOS matrix.
+## Later — proposed v0.2.0 Manual Battery Care
+- #6 secure verified backend, explicit user-triggered operations only; draft PR #18 paused and preserved. Requires new battery baseline, security and recovery evidence and owner authorization. No unattended writes.
+
+## Later — proposed v0.3.0 Smart Battery Care
+- #7 policy/hysteresis; first shadow-mode simulation, then separately authorized automatic control after validation.
+- Advanced profiles, scheduling, optional discharge/calibration, additional platform support remain deferred.
