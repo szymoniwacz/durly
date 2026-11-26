@@ -55,6 +55,11 @@ final class BatteryTests: XCTestCase {
                 try reopened.append(new, epoch: UUID())
                 XCTAssertTrue(false)
             } catch {}
+            let epochs = try reopened.epochs()
+            XCTAssertEqual(epochs.map { $0.id }, [b, a])
+            XCTAssertEqual(epochs.map { $0.sampleCount }, [1, 1])
+            let baseline = try reopened.observedBaseline(epoch: a)
+            XCTAssertEqual(baseline, old)
             let unchanged = try reopened.samples(epoch: a)
             XCTAssertEqual(unchanged, [old])
         } catch {
