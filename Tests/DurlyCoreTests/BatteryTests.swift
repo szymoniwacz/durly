@@ -34,12 +34,25 @@ final class BatteryTests: XCTestCase {
             let migrated = try store.samples(epoch: old)
             XCTAssertEqual(migrated, [sample])
             let current = try store.createEpoch(at: date.addingTimeInterval(60))
-            try store.append(sample, epoch: current)
+            let session = UUID()
+            try store.appendEvent(epoch: current, at: date, kind: .recordingStarted, session: session)
+            try store.append(sample, epoch: current, session: session)
             try store.appendEvent(epoch: old, at: date, kind: .recordingStopped)
             let output = folder.appendingPathComponent("archive.jsonl")
             try store.export(epoch: old, to: output)
             let lines = try String(contentsOf: output, encoding: .utf8).split(separator: "\n")
             XCTAssertEqual(lines.count, 3)
+            let legacy = try JSONSerialization.jsonObject(with: Data(lines[1].utf8)) as? [String: Any]
+            XCTAssertNil(legacy?["session"])
+            let currentOutput = folder.appendingPathComponent("current.jsonl")
+            let reopened = try BatteryHistory(url: url)
+            try reopened.export(epoch: current, to: currentOutput)
+            let currentLines = try String(contentsOf: currentOutput, encoding: .utf8).split(separator: "\n")
+            XCTAssertEqual(currentLines.count, 3)
+            for line in currentLines.dropFirst() {
+                let record = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+                XCTAssertEqual(record?["session"] as? String, session.uuidString)
+            }
             XCTAssertTrue(lines.allSatisfy { (try? JSONSerialization.jsonObject(with: Data($0.utf8))) != nil })
             do {
                 try store.export(epoch: old, to: output)
