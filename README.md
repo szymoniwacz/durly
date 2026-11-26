@@ -11,7 +11,7 @@ Durly is a planned **native, free and open-source macOS menu bar app** focused o
 - **Safety:** no forced discharge or calibration on a battery reporting faults or unexpected shutdowns.
 - **Local-first:** offline core functionality, minimal resource use, no account required.
 
-> **Project status:** Requirements and feasibility research. Features described above are planned, not yet implemented or verified on all hardware.
+> **Project status:** Read-only native monitoring works on the validated Intel Monterey target. v0.1.0 focuses on persistent history, analytics and alerts (#19–#23); charging control is deferred. Planned features are not claims of current support.
 
 **[Read the detailed product requirements](docs/product-requirements.md)** · **[Roadmap](.ai/project/roadmap.md)**
 
