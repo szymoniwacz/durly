@@ -19,6 +19,13 @@ final class PopoverModel: ObservableObject {
             ? "Charge control is not verified for this Mac. Durly does not change charging."
             : "Charge control is under investigation for this Mac. Durly does not change charging."
     }
+    @Published private(set) var historyStatus = "History not initialized"
+    @Published private(set) var previousEpochAvailable = false
+    @Published private(set) var recordingHistory = false
+    private var history: BatteryHistory?
+    private var capture = HistoryCapture()
+    private var previousEpoch: UUID?
+
     private let monitor: BatteryMonitor
     private let store: DisplaySettingsStore
     var onChange: (() -> Void)?
@@ -31,6 +38,63 @@ final class PopoverModel: ObservableObject {
         self.monitor = BatteryMonitor(provider: provider)
         self.store = store
         self.settings = store.load()
+        do {
+            let folder = try FileManager.default.url(for: .applicationSupportDirectory,
+                in: .userDomainMask, appropriateFor: nil, create: true)
+                .appendingPathComponent("Durly", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            history = try BatteryHistory(url: folder.appendingPathComponent("history.sqlite"))
+            previousEpoch = try history?.latestEpoch()
+            previousEpochAvailable = previousEpoch != nil
+            historyStatus = "Confirm battery to start recording"
+        } catch { history = nil; historyStatus = "History unavailable: storage initialization failed" }
+    }
+
+    func confirmBattery(replacement: Bool) {
+        guard let history = history, let sample = snapshot,
+              sample.percentage != nil, !sample.isStale(at: Date(), maximumAge: 30) else {
+            historyStatus = "Fresh battery data and storage required"
+            return
+        }
+        capture.suspend()
+        recordingHistory = false
+        do {
+            let id: UUID
+            if replacement || previousEpoch == nil {
+                id = try history.createEpoch(at: sample.capturedAt)
+            } else if let previous = previousEpoch {
+                id = previous
+            } else { return }
+            previousEpoch = id
+            previousEpochAvailable = true
+            capture.select(id)
+            recordingHistory = true
+            recordHistory()
+        } catch {
+            capture.suspend()
+            historyStatus = "History unavailable: battery selection failed"
+        }
+    }
+
+    private func recordHistory() {
+        guard let history = history, let sample = snapshot, let epoch = capture.epoch else { return }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        guard capture.shouldCapture(sample, uptime: uptime, now: Date()) else { return }
+        do {
+            try history.append(sample, epoch: epoch)
+            capture.recorded(sample, uptime: uptime)
+            historyStatus = "Recording · last saved " + DateFormatter.localizedString(from: sample.capturedAt, dateStyle: .none, timeStyle: .medium)
+        } catch {
+            capture.suspend()
+            recordingHistory = false
+            historyStatus = "Recording paused: storage error. Confirm battery to retry."
+        }
+    }
+
+    func suspendHistory() {
+        capture.suspend()
+        recordingHistory = false
+        if history != nil { historyStatus = "Confirm battery after sleep or missing data" }
     }
 
     // Explicit, one-shot diagnostic only; never poll the private driver.
@@ -74,6 +138,7 @@ final class PopoverModel: ObservableObject {
     func refresh() {
         monitor.refresh()
         snapshot = BatteryPresentation.fresh(monitor.snapshot, settings: settings)
+        if snapshot == nil { suspendHistory() } else { recordHistory() }
         onChange?()
     }
 
@@ -89,6 +154,7 @@ final class PopoverModel: ObservableObject {
     }
 
     func invalidateSnapshot() {
+        suspendHistory()
         snapshot = nil
         onChange?()
     }
