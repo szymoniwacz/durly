@@ -48,7 +48,7 @@ Mockable providers and deterministic policy tests; accurate missing-data handlin
 | SMC support unknown | #3 establishes GO/NO-GO, fallback on uncertainty |
 | Battery service warning and low reported capacity | Read-only first; no forced discharge or calibration |
 | Local SDK 13.1 and Swift 5.7 toolchain | Import smoke test passed; full app build in #4 |
-| Crash/sleep/reboot behavior unknown | #9 validates before enabling release control |
+| Crash/sleep/reboot behavior unknown | #9 validates monitoring and history continuity; control deferred |
 | One-day delivery target | Reduce to safe monitoring-only build rather than bypass gates |
 
 ## First useful version and later versions
@@ -61,13 +61,13 @@ See [scope](../project/scope.md) and [roadmap](../project/roadmap.md). Release g
 |---|---|---|---|
 | Product purpose | decided | Battery longevity manager | vision; product spec §1 |
 | Users | decided | MacBook owners, desk/mixed/mobile | product spec §3 |
-| Outcomes | decided | Reliable telemetry and safe control | FR-001–007 |
+| Outcomes | decided | Reliable telemetry, history, analytics and actionable alerts | FR-001–012 |
 | Success criteria | decided | Local app and evidence-backed release gate | #9, #10 |
 | First useful version | decided | Monitoring, history, analytics and alerts only | scope |
 | Non-goals | decided | No rejuvenation, unsafe discharge or broad compatibility claims | scope; spec §9 |
-| Interfaces | decided | Menu bar, preferences, diagnostics | FR-001–005 |
+| Interfaces | decided | Menu bar, preferences, history dashboard and diagnostics | FR-001–012 |
 | Inputs and outputs | decided | Local battery telemetry, preferences, export | Inputs section |
-| Architecture shape | decided | UI, telemetry, policy, isolated backend and fallback | spec §6; #3 for helper choice |
+| Architecture shape | decided | UI, telemetry, local history, analytics and advisory alerts; isolated control backend deferred | spec §6; #19–#23 |
 | Boundaries | decided | OS safeguards retained; no unsupported writes | spec §7 |
 | Storage and data ownership | decided | Local settings, SQLite history (validate in #19), and explicit diagnostics; user owns data | spec §6 |
 | Retention and migrations | decided | Versioned history schema; no automatic deletion in first increment; deliberate export/deletion; later retention policy | #19 |
