@@ -599,10 +599,10 @@ final class BatteryTests: XCTestCase {
 
     func testSMCProbeTargetRequiresExactIdentity() {
         XCTAssertTrue(SMCProbeTarget.supports(model: "MacBookPro11,5", os: "12.7.6", architecture: "x86_64"))
-        XCTAssertFalse(SMCProbeTarget.supports(model: "MacBookPro11,4", os: "12.7.6", architecture: "x86_64"))
-        XCTAssertFalse(SMCProbeTarget.supports(model: "MacBookPro11,5", os: "12.7.5", architecture: "x86_64"))
-        XCTAssertFalse(SMCProbeTarget.supports(model: "MacBookPro11,5", os: "12.7.6", architecture: "arm64"))
-        XCTAssertFalse(SMCProbeTarget.supports(model: "", os: "12.7.6", architecture: "x86_64"))
+        XCTAssertTrue(!SMCProbeTarget.supports(model: "MacBookPro11,4", os: "12.7.6", architecture: "x86_64"))
+        XCTAssertTrue(!SMCProbeTarget.supports(model: "MacBookPro11,5", os: "12.7.5", architecture: "x86_64"))
+        XCTAssertTrue(!SMCProbeTarget.supports(model: "MacBookPro11,5", os: "12.7.6", architecture: "arm64"))
+        XCTAssertTrue(!SMCProbeTarget.supports(model: "", os: "12.7.6", architecture: "x86_64"))
     }
 
     func testSMCProbeCloseFailurePreservesResultsAndBlocksFutureOpen() {
