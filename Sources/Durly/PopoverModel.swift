@@ -26,6 +26,8 @@ final class PopoverModel: ObservableObject {
     @Published private(set) var historyReadError = false
     private var history: BatteryHistory?
     private var capture = HistoryCapture()
+    private var recordingSession: UUID?
+    @Published private(set) var recentEvents: [HistoryEvent] = []
     @Published private(set) var previousEpoch: UUID?
     @Published private(set) var historyEpochs: [BatteryEpoch] = []
     @Published private(set) var viewedEpoch: UUID?
@@ -73,14 +75,33 @@ final class PopoverModel: ObservableObject {
     }
 
     func stopRecording() {
+        endRecording(.recordingStopped, status: "Recording stopped")
+    }
+
+    private func endRecording(_ kind: HistoryEventKind, status: String) {
+        let epoch = capture.epoch
+        let session = recordingSession
         capture.suspend()
+        recordingSession = nil
         recordingHistory = false
-        historyStatus = "Recording stopped"
+        guard let epoch = epoch, let history = history else { return }
+        do {
+            try history.appendEvent(epoch: epoch, at: Date(), kind: kind, session: session)
+            historyStatus = status
+            loadHistory()
+        } catch {
+            historyStatus = "Recording paused: could not save end event"
+        }
+    }
+
+    func finishRecording() {
+        endRecording(.appQuit, status: "Recording stopped")
     }
 
     func loadHistory() {
         guard let history = history else {
             recentHistory = []
+            recentEvents = []
             observedBaseline = nil
             historyReadError = true
             return
@@ -94,17 +115,20 @@ final class PopoverModel: ObservableObject {
                 return
             }
             recentHistory = try history.samples(epoch: epoch, limit: historyLimit)
+            recentEvents = try history.events(epoch: epoch, limit: 20)
             observedBaseline = try history.observedBaseline(epoch: epoch)
             historyReadError = false
         } catch {
             recentHistory = []
+            recentEvents = []
             observedBaseline = nil
             historyReadError = true
         }
     }
 
     func confirmBattery(replacement: Bool) {
-        if replacement { stopRecording() }
+        guard !smcProbeRunning, replacement || !recordingHistory else { return }
+        if replacement { endRecording(.replacement, status: "Confirm replacement battery") }
         monitor.refresh()
         snapshot = BatteryPresentation.fresh(monitor.snapshot, settings: settings)
         onChange?()
@@ -125,6 +149,10 @@ final class PopoverModel: ObservableObject {
             previousEpoch = id
             previousEpochAvailable = true
             if replacement || viewedEpoch == nil { viewedEpoch = id; historyLimit = 20 }
+            let session = UUID()
+            try history.appendEvent(epoch: id, at: sample.capturedAt, kind: .recordingStarted,
+                detail: replacement ? "Replacement confirmed" : "Battery confirmed", session: session)
+            recordingSession = session
             capture.select(id)
             recordingHistory = true
             recordHistory()
@@ -139,8 +167,7 @@ final class PopoverModel: ObservableObject {
         guard let history = history, let sample = snapshot, let epoch = capture.epoch else { return }
         let uptime = ProcessInfo.processInfo.systemUptime
         if capture.clockRegressed(sample, uptime: uptime) {
-            suspendHistory()
-            historyStatus = "Confirm battery after clock change"
+            endRecording(.clockChange, status: "Confirm battery after clock change")
             return
         }
         guard capture.shouldCapture(sample, uptime: uptime, now: Date()) else { return }
@@ -150,21 +177,20 @@ final class PopoverModel: ObservableObject {
             loadHistory()
             historyStatus = "Recording · last saved " + DateFormatter.localizedString(from: sample.capturedAt, dateStyle: .none, timeStyle: .medium)
         } catch {
-            capture.suspend()
-            recordingHistory = false
-            historyStatus = "Recording paused: storage error. Confirm battery to retry."
+            endRecording(.telemetryUnavailable, status: "Recording paused: storage error. Confirm battery to retry.")
         }
     }
 
-    func suspendHistory() {
-        capture.suspend()
-        recordingHistory = false
-        if history != nil { historyStatus = "Confirm battery after sleep or missing data" }
+    func suspendHistory(kind: HistoryEventKind = .telemetryUnavailable) {
+        endRecording(kind, status: "Confirm battery after sleep or missing data")
     }
 
     // Explicit, one-shot diagnostic only; never poll the private driver.
     func probeSMC() {
         guard canProbeSMC, !smcProbeRunning, !smcProbeBlocked else { return }
+        let probeEpoch = capture.epoch
+        let probeSession = recordingSession
+        let probeStarted = Date()
         smcProbeRunning = true
         smcProbeReport = nil
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -193,9 +219,23 @@ final class PopoverModel: ObservableObject {
                 blocked = (error as? SMCReadError) == .sessionBlocked
             }
             DispatchQueue.main.async { [weak self] in
-                self?.smcProbeReport = report
-                self?.smcProbeBlocked = blocked
-                self?.smcProbeRunning = false
+                guard let self = self else { return }
+                self.smcProbeReport = report
+                self.smcProbeBlocked = blocked
+                self.smcProbeRunning = false
+                if let epoch = probeEpoch, let session = probeSession,
+                   self.capture.epoch == epoch, self.recordingSession == session,
+                   let history = self.history {
+                    do {
+                        try history.appendEvent(epoch: epoch, at: probeStarted, kind: .manualSMC,
+                            detail: report, session: session)
+                        self.loadHistory()
+                    } catch {
+                        self.endRecording(.telemetryUnavailable, status: "Recording paused: diagnostic save failed")
+                    }
+                } else {
+                    self.smcProbeReport = report + "\\nNot archived: no continuous confirmed recording session."
+                }
             }
         }
     }
@@ -219,7 +259,7 @@ final class PopoverModel: ObservableObject {
     }
 
     func invalidateSnapshot() {
-        suspendHistory()
+        suspendHistory(kind: .sleep)
         snapshot = nil
         onChange?()
     }
