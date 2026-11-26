@@ -3,6 +3,7 @@ import DurlyCore
 
 struct PopoverView: View {
     @ObservedObject var model: PopoverModel
+    let maximumHeight: CGFloat
     let quit: () -> Void
     @State private var showSettings = false
     @Environment(\.colorScheme) private var colorScheme
@@ -20,11 +21,15 @@ struct PopoverView: View {
                     Image(systemName: "gearshape")
                 }.help("Settings").accessibilityLabel("Settings")
             }
-            if showSettings {
-                settingsPanel
-            } else {
-                overview
+            ScrollView {
+                if showSettings {
+                    settingsPanel
+                } else {
+                    overview
+                }
             }
+            .frame(maxHeight: maximumHeight - 100)
+            .fixedSize(horizontal: false, vertical: true)
             Divider()
             HStack {
                 Text("Local battery monitoring").font(.caption).foregroundColor(.secondary)
@@ -47,7 +52,7 @@ struct PopoverView: View {
                     Text(model.chargeState).font(.subheadline).foregroundColor(.secondary)
                 }
                 Spacer()
-                Image(systemName: "battery.100").font(.system(size: 30)).foregroundColor(.secondary)
+                Image(systemName: model.batterySymbol).font(.system(size: 30)).foregroundColor(.secondary)
                     .accessibilityHidden(true)
             }
             if let percentage = model.snapshot?.percentage {
