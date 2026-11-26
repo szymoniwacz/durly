@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var expiryTimer: Timer?
     private var wakeObserver: NSObjectProtocol?
     private var sleepObserver: NSObjectProtocol?
+    private var sleeping = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -24,9 +25,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onChange = { [weak self] in self?.updatePresentation() }
         let center = NSWorkspace.shared.notificationCenter
         wakeObserver = center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.sleeping = false
             self?.model.refresh()
         }
         sleepObserver = center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.sleeping = true
             self?.model.invalidateSnapshot()
         }
         model.refresh()
@@ -54,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func poll() { model.refresh() }
+    @objc private func poll() { if !sleeping { model.refresh() } }
 
     private func scheduleExpiry() {
         expiryTimer?.invalidate()
@@ -72,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            model.refresh()
+            if !sleeping { model.refresh() }
             let screenHeight = button.window?.screen?.visibleFrame.height ?? 700
             popover.contentViewController = NSHostingController(rootView: PopoverView(model: model, maximumHeight: max(180, screenHeight - 60), quit: {
                 NSApplication.shared.terminate(nil)
