@@ -81,6 +81,26 @@ final class BatteryTests: XCTestCase {
         XCTAssertNil(invalid.rawChargePercentage)
     }
 
+    func testDisplaySettingsPersistAndValidate() {
+        let suite = "durly.tests." + UUID().uuidString
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            preconditionFailure("Could not create isolated defaults")
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = DisplaySettingsStore(defaults: defaults)
+        XCTAssertEqual(store.load(), DisplaySettings())
+        let changed = DisplaySettings(showPercentage: false, showDetails: true, refreshSeconds: 60)
+        store.save(changed)
+        XCTAssertEqual(DisplaySettingsStore(defaults: defaults).load(), changed)
+        XCTAssertEqual(DisplaySettings(refreshSeconds: 0).refreshSeconds, 10)
+        defaults.set(["showPercentage": "invalid", "showDetails": 1, "refreshSeconds": 999],
+                     forKey: "durly.display.v1")
+        XCTAssertEqual(store.load(), DisplaySettings())
+        defaults.set(["showPercentage": false, "showDetails": true, "refreshSeconds": true],
+                     forKey: "durly.display.v1")
+        XCTAssertEqual(store.load(), DisplaySettings(showPercentage: false, showDetails: true))
+    }
+
     private final class MockProvider: BatteryProvider {
         let value: BatterySnapshot
         var shouldFail = false
