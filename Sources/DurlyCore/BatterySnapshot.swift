@@ -63,6 +63,11 @@ public enum BatteryDecoder {
         return n
     }
 
+    private static func capacityPair(_ current: Any?, _ maximum: Any?) -> (Int, Int)? {
+        guard let current = integer(current), let maximum = positive(maximum), current <= maximum else { return nil }
+        return (current, maximum)
+    }
+
     public static func decode(registry: [String: Any], powerSource: [String: Any],
                               capturedAt: Date = Date()) -> BatterySnapshot {
         let displayed: Int?
@@ -78,12 +83,23 @@ public enum BatteryDecoder {
         case "Battery Power": source = false
         default: source = boolean(registry["ExternalConnected"])
         }
+        // Never combine capacity values from different registry key families.
+        let raw = capacityPair(registry["AppleRawCurrentCapacity"], registry["AppleRawMaxCapacity"])
+        let standard = capacityPair(registry["CurrentCapacity"], registry["MaxCapacity"])
+        let pair = raw ?? standard
+        // Preserve individually available capacity data if no complete pair exists,
+        // but select both fields from the same family.
+        let useRaw = raw != nil || (standard == nil && (integer(registry["AppleRawCurrentCapacity"]) != nil || positive(registry["AppleRawMaxCapacity"]) != nil))
+        let partialCurrent = integer(registry[useRaw ? "AppleRawCurrentCapacity" : "CurrentCapacity"])
+        let partialMax = positive(registry[useRaw ? "AppleRawMaxCapacity" : "MaxCapacity"])
+        let selectedCurrent = pair?.0 ?? (partialMax == nil ? partialCurrent : nil)
+        let selectedMax = pair?.1 ?? partialMax
         return BatterySnapshot(
             capturedAt: capturedAt, percentage: displayed, externalPower: source,
             isCharging: boolean(powerSource["Is Charging"]) ?? boolean(registry["IsCharging"]),
             cycles: integer(registry["CycleCount"]),
-            currentCapacity: integer(registry["AppleRawCurrentCapacity"] ?? registry["CurrentCapacity"]),
-            maxCapacity: positive(registry["AppleRawMaxCapacity"] ?? registry["MaxCapacity"]),
+            currentCapacity: selectedCurrent,
+            maxCapacity: selectedMax,
             designCapacity: positive(registry["DesignCapacity"]),
             temperatureCelsius: temperature, currentMilliamps: current(registry["Amperage"]),
             voltageMillivolts: positive(registry["Voltage"]),
