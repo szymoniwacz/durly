@@ -126,7 +126,7 @@ struct PopoverView: View {
             }
             if model.previousEpochAvailable {
                 Button("Register replacement battery") { confirmReplacement = true }
-                    .disabled(model.unavailable)
+                    .disabled(model.unavailable || model.smcProbeRunning)
                     .alert("Start a separate battery history?", isPresented: $confirmReplacement) {
                         Button("Cancel", role: .cancel) {}
                         Button("Confirm replacement") { model.confirmBattery(replacement: true) }
@@ -159,6 +159,17 @@ struct PopoverView: View {
             if let baseline = model.observedBaseline {
                 Text("First observed capacity: " + number(baseline.maxCapacity, " mAh"))
                     .font(.caption).foregroundColor(.secondary)
+            }
+            if !model.recentEvents.isEmpty {
+                DisclosureGroup("Recent monitoring events") {
+                    ForEach(model.recentEvents) { event in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(DateFormatter.localizedString(from: event.capturedAt, dateStyle: .short, timeStyle: .medium)).font(.caption)
+                            Text(event.kind.rawValue).font(.callout)
+                            if !event.detail.isEmpty { Text(event.detail).font(.caption).textSelection(.enabled) }
+                        }
+                    }
+                }
             }
             Text("Showing " + String(model.recentHistory.count) + " most recent saved samples")
                 .font(.caption).foregroundColor(.secondary)
