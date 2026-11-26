@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        model.finishRecording()
         timer?.invalidate()
         expiryTimer?.invalidate()
         let center = NSWorkspace.shared.notificationCenter
