@@ -145,6 +145,122 @@ final class BatteryTests: XCTestCase {
         XCTAssertNil(BatteryPresentation.fresh(nil, settings: DisplaySettings(), at: now))
     }
 
+    func testPowerControlAlwaysReadOnly() {
+        let target = ControlCapabilityDetector.detect(model: "MacBookPro11,5", os: "12.7.6", architecture: "x86_64")
+        XCTAssertEqual(target.reason, .unverifiedBackend)
+        XCTAssertEqual(target.canWrite, false)
+        XCTAssertEqual(ControlCapabilityDetector.detect(model: "other", os: "12.7.6", architecture: "x86_64").reason, .unsupportedDevice)
+        XCTAssertEqual(ControlCapabilityDetector.detect(model: "MacBookPro11,5", os: "12.7.5", architecture: "x86_64").canWrite, false)
+        XCTAssertEqual(ControlCapabilityDetector.detect(model: "MacBookPro11,5", os: "12.7.6", architecture: "arm64").canWrite, false)
+        let backend = ReadOnlyBackend()
+        expectControlError(.unverifiedBackend) { try backend.apply(limit: 80, snapshot: nil, at: Date()) }
+        expectControlError(.unverifiedBackend) { try backend.pause(snapshot: nil, at: Date()) }
+    }
+
+    func testTransactionRejectsUnsafeInputs() {
+        let context = controlContext()
+        expectControlError(.permissionDenied) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(authorized: false)) }
+        expectControlError(.competingController) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(competitorAbsent: false)) }
+        expectControlError(.staleTelemetry) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(age: 16)) }
+        expectControlError(.staleTelemetry) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(age: -1)) }
+        expectControlError(.unsafeTelemetry) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(health: "Check Battery")) }
+        expectControlError(.unsafeTelemetry) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(ac: false)) }
+        expectControlError(.unsafeTelemetry) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(temperature: 4500)) }
+        expectControlError(.invalidLimit) { try ControlTransaction.prepare(limit: 49, live: 76, existing: nil, context: context) }
+        expectControlError(.unknownBaseline) { try ControlTransaction.prepare(limit: 80, live: 15, existing: nil, context: context) }
+    }
+
+    func testSimulatedControlAndPauseRestoreBaseline() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+        do {
+            try coordinator.apply(limit: 82, context: controlContext())
+            XCTAssertEqual(transport.value, 82)
+            XCTAssertEqual(journal.record, RecoveryRecord(baseline: 76, expected: 82))
+            try coordinator.pause(context: controlContext())
+            XCTAssertEqual(transport.value, 76)
+            XCTAssertNil(journal.record)
+            XCTAssertEqual(transport.writes, [82, 76])
+        } catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+    }
+
+    func testSimulatedControlFailureRetainsRecoveryRecord() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+        transport.failWrite = true
+        expectControlError(.writeFailed) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+        XCTAssertEqual(journal.record, RecoveryRecord(baseline: 76, expected: 82))
+        transport.failWrite = false
+        expectControlError(.recoveryRequired) { try coordinator.apply(limit: 80, context: self.controlContext()) }
+        expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82])
+    }
+
+    func testSimulatedDriftAndReadbackMismatch() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+        transport.ignoreWrite = true
+        expectControlError(.readbackMismatch) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+        XCTAssertEqual(journal.record, RecoveryRecord(baseline: 76, expected: 82))
+        let restarted = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+        expectControlError(.recoveryRequired) { try restarted.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82])
+    }
+
+    func testSimulatedJournalFailurePreventsWrite() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        journal.failSave = true
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+        expectControlError(.journalFailed) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [])
+    }
+
+    private func controlContext(authorized: Bool = true, competitorAbsent: Bool = true, age: TimeInterval = 0,
+                                health: String = "Normal", ac: Bool = true, temperature: Int = 3000) -> ControlContext {
+        let now = Date(timeIntervalSince1970: 1000)
+        let sample = BatteryDecoder.decode(registry: ["ExternalConnected": ac, "IsCharging": false,
+            "Temperature": temperature, "BatteryHealth": health], powerSource: ["Current Capacity": 79, "Max Capacity": 100],
+            capturedAt: now.addingTimeInterval(-age))
+        return ControlContext(authorized: authorized, competitorAbsent: competitorAbsent, snapshot: sample, now: now)
+    }
+
+    private func expectControlError(_ expected: ControlBlock, _ operation: () throws -> Void) {
+        do {
+            try operation()
+            XCTAssertEqual("no error", expected.rawValue)
+        } catch {
+            XCTAssertEqual(error as? ControlBlock, expected)
+        }
+    }
+
+    private final class TestTransport: LimitTransport {
+        var value = 76
+        var writes: [Int] = []
+        var failWrite = false
+        var ignoreWrite = false
+        func read() throws -> Int { value }
+        func write(_ value: Int) throws {
+            writes.append(value)
+            if failWrite { throw ControlBlock.writeFailed }
+            if !ignoreWrite { self.value = value }
+        }
+    }
+
+    private final class TestJournal: RecoveryJournal {
+        var record: RecoveryRecord?
+        var failSave = false
+        func load() throws -> RecoveryRecord? { record }
+        func save(_ record: RecoveryRecord) throws {
+            if failSave { throw ControlBlock.journalFailed }
+            self.record = record
+        }
+        func clear() throws { record = nil }
+    }
+
     private final class MockProvider: BatteryProvider {
         let value: BatterySnapshot
         var shouldFail = false
