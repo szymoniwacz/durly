@@ -18,7 +18,7 @@ Durly is a planned **native, free and open-source macOS menu bar app** focused o
 
 ## Development
 
-Initial target: Intel macOS 12.7.6. Use Swift 5.7-compatible SwiftPM and Command Line Tools, without full Xcode, Codex or Cursor. Linux-only CI checks repository contracts and portable code; native builds and device tests run locally. The read-only scaffold is available for local validation; charging control is not implemented.
+Initial target: Intel macOS 12.7.6. Use Swift 5.7-compatible Command Line Tools locally and SwiftPM in Linux CI, without full Xcode, Codex or Cursor. Linux-only CI checks repository contracts and portable code; native builds and device tests run locally. The read-only scaffold is available for local validation; charging control is not implemented.
 
 For maintainers with private workflow access:
 
@@ -34,15 +34,12 @@ Do not commit reusable private workflow files. See [development setup](docs/setu
 ### Build and run locally (macOS 12+)
 
 ```bash
-swift build
-swift test
-swift run Durly
-# Quit Durly before building/launching the app bundle.
+bash scripts/test-local.sh
 bash scripts/build-app.sh
 open dist/Durly.app
 ```
 
-The app uses an ad-hoc local signature, not notarized distribution. Linux runs the portable core tests only (`swift test`); it does not compile AppKit or IOKit. No hardware writes, root access or bclm dependency.
+The app uses an ad-hoc local signature, not notarized distribution. Local scripts use swiftc directly because the target CLT lacks the PackageDescription module and XCTest. Linux runs the portable core tests (`swift test` and `bash scripts/test-local.sh`); it does not compile AppKit or IOKit. No hardware writes, root access or bclm dependency.
 
 ## License
 
