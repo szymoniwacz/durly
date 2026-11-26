@@ -18,7 +18,7 @@ Durly is a planned **native, free and open-source macOS menu bar app** focused o
 
 ## Development
 
-Initial target: Intel macOS 12.7.6. Use Swift 5.7-compatible Command Line Tools locally and SwiftPM in Linux CI, without full Xcode, Codex or Cursor. Linux-only CI checks repository contracts and portable code; native builds and device tests run locally. The read-only scaffold is available for local validation; charging control is not implemented.
+Initial target: Intel macOS 12.7.6. Use Swift 5.7-compatible Command Line Tools locally and SwiftPM in Linux CI, without full Xcode, Codex or Cursor. Linux-only CI checks repository contracts and portable code; native builds and device tests run locally. The read-only menu bar popover shows battery status, health warnings and optional diagnostics. Its display settings are saved locally; charging control is not implemented.
 
 For maintainers with private workflow access:
 
@@ -34,6 +34,7 @@ Do not commit reusable private workflow files. See [development setup](docs/setu
 ### Build and run locally (Intel Mac, Monterey 12.7.6 validated)
 
 ```bash
+# Quit any running Durly instance before rebuilding.
 bash scripts/test-local.sh
 bash scripts/build-app.sh
 open dist/Durly.app
