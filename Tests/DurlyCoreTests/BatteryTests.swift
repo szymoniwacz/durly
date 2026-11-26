@@ -6,6 +6,39 @@ import XCTest
 import DurlyCore
 
 final class BatteryTests: XCTestCase {
+    func testHistoryPersistenceAndEpochSeparation() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            let date = Date(timeIntervalSince1970: 1000)
+            let old = BatteryDecoder.decode(registry: ["MaxCapacity": 4552], powerSource: [:], capturedAt: date)
+            let new = BatteryDecoder.decode(registry: ["MaxCapacity": 8600], powerSource: [:], capturedAt: date)
+            let store = try BatteryHistory(url: url)
+            let a = try store.createEpoch(at: date)
+            let b = try store.createEpoch(at: date)
+            try store.append(old, epoch: a)
+            try store.append(new, epoch: b)
+            let reopened = try BatteryHistory(url: url)
+            let oldSamples = try reopened.samples(epoch: a)
+            let newSamples = try reopened.samples(epoch: b)
+            XCTAssertEqual(oldSamples, [old])
+            XCTAssertEqual(newSamples, [new])
+            XCTAssertNil(newSamples.first?.temperatureCelsius)
+            do {
+                try reopened.append(new, epoch: a)
+                XCTAssertTrue(false)
+            } catch {}
+            do {
+                try reopened.append(new, epoch: UUID())
+                XCTAssertTrue(false)
+            } catch {}
+            let unchanged = try reopened.samples(epoch: a)
+            XCTAssertEqual(unchanged, [old])
+        } catch {
+            XCTAssertTrue(false)
+        }
+    }
+
     func testSeparatesDisplayedAndRawPercentagesAndDecodesSignedCurrent() {
         let snapshot = BatteryDecoder.decode(registry: [
             "CurrentCapacity": 3494, "MaxCapacity": 4552, "DesignCapacity": 8600,
