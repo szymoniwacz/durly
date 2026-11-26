@@ -1,0 +1,35 @@
+import Foundation
+
+// A fresh session requires explicit epoch confirmation when hardware identity
+// is not established. No identity is inferred from capacity or cycle count.
+public struct HistoryCapture {
+    public private(set) var epoch: UUID?
+    private var last: BatterySnapshot?
+    private var lastUptime: TimeInterval?
+    public init() {}
+    public mutating func select(_ epoch: UUID) {
+        self.epoch = epoch
+        last = nil
+        lastUptime = nil
+    }
+    public mutating func suspend() {
+        epoch = nil
+        last = nil
+        lastUptime = nil
+    }
+    public func shouldCapture(_ sample: BatterySnapshot, uptime: TimeInterval, now: Date) -> Bool {
+        guard epoch != nil, uptime.isFinite, uptime >= 0,
+              !sample.isStale(at: now, maximumAge: 30),
+              sample.percentage != nil else { return false }
+        guard let last = last, let previous = lastUptime else { return true }
+        guard uptime >= previous, sample.capturedAt > last.capturedAt else { return false }
+        let elapsed = uptime - previous
+        return elapsed >= 60 || (elapsed >= 1 &&
+            (sample.externalPower != last.externalPower || sample.isCharging != last.isCharging ||
+             sample.condition != last.condition))
+    }
+    public mutating func recorded(_ sample: BatterySnapshot, uptime: TimeInterval) {
+        last = sample
+        lastUptime = uptime
+    }
+}
