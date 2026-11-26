@@ -146,7 +146,22 @@ struct PopoverView: View {
                 Spacer()
                 Button("Back") { showHistory = false }
             }
-            Text("Latest 20 saved samples · selected battery").font(.caption).foregroundColor(.secondary)
+            Picker("Battery", selection: Binding(get: { model.viewedEpoch }, set: { model.selectHistory($0) })) {
+                ForEach(model.historyEpochs) { epoch in
+                    Text("Battery " + String(epoch.number) + (epoch.id == model.previousEpoch ? " · latest" : " · archived"))
+                        .tag(Optional(epoch.id))
+                }
+            }
+            if let epoch = model.historyEpochs.first(where: { $0.id == model.viewedEpoch }) {
+                Text("Registered " + DateFormatter.localizedString(from: epoch.createdAt, dateStyle: .short, timeStyle: .none) + " · " + String(epoch.sampleCount) + " samples")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            if let baseline = model.observedBaseline {
+                Text("First observed capacity: " + number(baseline.maxCapacity, " mAh"))
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            Text("Showing " + String(model.recentHistory.count) + " most recent saved samples")
+                .font(.caption).foregroundColor(.secondary)
             if model.historyReadError {
                 Text("History could not be read.").foregroundColor(.secondary)
             } else if model.recentHistory.isEmpty {
@@ -174,6 +189,9 @@ struct PopoverView: View {
                         }
                     }
                     Divider()
+                }
+                if model.canShowMoreHistory {
+                    Button("Show older samples", action: model.showMoreHistory)
                 }
             }
         }
