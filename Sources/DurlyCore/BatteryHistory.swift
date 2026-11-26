@@ -25,7 +25,7 @@ public struct HistoryEvent: Identifiable, Equatable, Codable {
 }
 
 public enum HistoryError: Error {
-    case sqlite(Int32), unsupportedSchema, invalidSample, unknownEpoch
+    case sqlite(Int32), unsupportedSchema, invalidSample, unknownEpoch, activeEpoch, unsafeExportDestination
 }
 
 // One connection, serialized by the lock. No hardware access.
@@ -135,6 +135,90 @@ public final class BatteryHistory {
                     kind: eventKind, detail: String(cString: detail), session: session))
             }
         }
+    }
+
+    // Export an immutable, transactionally consistent JSON Lines stream without
+    // loading the entire history into memory. The caller supplies a new file.
+    public func export(epoch: UUID, to url: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard url.isFileURL, !FileManager.default.fileExists(atPath: url.path) else {
+            throw HistoryError.unsafeExportDestination
+        }
+        let temporary = url.deletingLastPathComponent().appendingPathComponent(".durly-export-" + UUID().uuidString)
+        guard FileManager.default.createFile(atPath: temporary.path, contents: nil,
+                attributes: [.posixPermissions: 0o600]) else { throw HistoryError.unsafeExportDestination }
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let handle = try FileHandle(forWritingTo: temporary)
+        defer { try? handle.close() }
+        func write(_ object: [String: Any]) throws {
+            var data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            data.append(10)
+            try handle.write(contentsOf: data)
+        }
+        try execute("BEGIN")
+        do {
+            try statement("SELECT created_at FROM battery_epoch WHERE id=?") { stmt in
+                try bind(epoch.uuidString, 1, stmt)
+                guard sqlite3_step(stmt) == SQLITE_ROW else { throw HistoryError.unknownEpoch }
+                try write(["type": "metadata", "version": 1, "epoch": epoch.uuidString,
+                           "registeredUnixSeconds": sqlite3_column_double(stmt, 0),
+                           "coverage": "Legacy samples may lack session boundaries"])
+            }
+            try statement("SELECT id,captured_at,payload FROM sample WHERE epoch=? ORDER BY id") { stmt in
+                try bind(epoch.uuidString, 1, stmt)
+                while true {
+                    let result = sqlite3_step(stmt)
+                    if result == SQLITE_DONE { break }
+                    guard result == SQLITE_ROW, let value = sqlite3_column_text(stmt, 2) else {
+                        throw HistoryError.sqlite(result)
+                    }
+                    let payload = try JSONSerialization.jsonObject(with: Data(String(cString: value).utf8))
+                    try write(["type": "sample", "id": sqlite3_column_int64(stmt, 0),
+                               "unixSeconds": sqlite3_column_double(stmt, 1), "snapshot": payload])
+                }
+            }
+            try statement("SELECT id,captured_at,kind,detail,session FROM history_event WHERE epoch=? ORDER BY id") { stmt in
+                try bind(epoch.uuidString, 1, stmt)
+                while true {
+                    let result = sqlite3_step(stmt)
+                    if result == SQLITE_DONE { break }
+                    guard result == SQLITE_ROW, let kind = sqlite3_column_text(stmt, 2),
+                          let detail = sqlite3_column_text(stmt, 3) else { throw HistoryError.sqlite(result) }
+                    var row: [String: Any] = ["type": "event", "id": sqlite3_column_int64(stmt, 0),
+                        "unixSeconds": sqlite3_column_double(stmt, 1), "kind": String(cString: kind),
+                        "detail": String(cString: detail)]
+                    if let session = sqlite3_column_text(stmt, 4) { row["session"] = String(cString: session) }
+                    try write(row)
+                }
+            }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+        try handle.synchronize()
+        try handle.close()
+        try FileManager.default.moveItem(at: temporary, to: url)
+    }
+
+    // Only historical epochs can be removed. The latest remains available for
+    // explicit confirmation on launch, even if recording is currently stopped.
+    public func deleteArchivedEpoch(_ epoch: UUID) throws {
+        lock.lock(); defer { lock.unlock() }
+        try execute("BEGIN IMMEDIATE")
+        do {
+            try statement("SELECT id FROM battery_epoch ORDER BY rowid DESC LIMIT 1") { stmt in
+                guard sqlite3_step(stmt) == SQLITE_ROW, let value = sqlite3_column_text(stmt, 0) else {
+                    throw HistoryError.unknownEpoch
+                }
+                guard String(cString: value) != epoch.uuidString else { throw HistoryError.activeEpoch }
+            }
+            for sql in ["DELETE FROM sample WHERE epoch=?", "DELETE FROM history_event WHERE epoch=?", "DELETE FROM battery_epoch WHERE id=?"] {
+                try statement(sql) { stmt in
+                    try bind(epoch.uuidString, 1, stmt)
+                    try done(stmt)
+                }
+            }
+            guard sqlite3_changes(db) == 1 else { throw HistoryError.unknownEpoch }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
     }
 
     public func epochs() throws -> [BatteryEpoch] {
