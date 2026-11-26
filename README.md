@@ -42,6 +42,31 @@ open dist/Durly.app
 
 The build script targets x86_64 macOS 12.0; other models and OS versions are not yet validated. The app uses an ad-hoc local signature, not notarized distribution. Local scripts use swiftc directly because the target CLT lacks the PackageDescription module and XCTest. Linux runs the portable core tests (`swift test` and `bash scripts/test-local.sh`); it does not compile AppKit or IOKit. No hardware writes, root access or bclm dependency.
 
+## Battery history (v0.1.0 development)
+
+History is stored locally in `~/Library/Application Support/Durly/history.sqlite`.
+While recording, Durly observes telemetry approximately every five seconds while awake,
+saves the first valid snapshot of each confirmed session, then saves full snapshots
+only when an observed field changes. Display diagnostics settings do not filter saved fields.
+No periodic duplicate snapshots or synthetic offline measurements are generated.
+
+Confirm the same physical battery on restart or after a monitoring interruption.
+After a physical replacement, choose **Register replacement battery**, not Start recording.
+Each battery has a random local identifier; the first observed sample is not a factory baseline.
+Archived histories are preserved. Manual SMC reports are recorded only within a confirmed session.
+Old samples without a session and sessions without a recorded ending have unknown coverage;
+do not interpolate them into continuous observations.
+
+View history supports a battery selector, recent samples, events, complete JSON Lines export
+to a new file, and explicitly confirmed deletion of archived batteries only.
+Exports include Unix timestamps in seconds and session IDs where available.
+No automatic retention or deletion is enabled. Storage grows with changes:
+at a sustained five-second change interval, up to roughly 17,280 scheduled samples per day
+(plus manual refreshes), potentially several MB per day depending on payload and SQLite overhead.
+Actual size varies; check the database file rather than treating this estimate as a quota.
+Deleting archives frees SQLite pages for reuse but does not necessarily shrink the file.
+Retention and long-range query optimization will be addressed separately.
+
 ## License
 
 MIT; see [LICENSE](LICENSE).
