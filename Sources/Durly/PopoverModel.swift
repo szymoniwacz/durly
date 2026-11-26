@@ -23,8 +23,12 @@ final class PopoverModel: ObservableObject {
         var model = ""
         if sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0, size < 1024 {
             var buffer = [CChar](repeating: 0, count: size)
-            if sysctlbyname("hw.model", &buffer, &size, nil, 0) == 0 {
-                model = String(cString: buffer)
+            let status = buffer.withUnsafeMutableBytes { bytes in
+                sysctlbyname("hw.model", bytes.baseAddress, &size, nil, 0)
+            }
+            if status == 0, size > 0, size <= buffer.count,
+               let terminator = buffer.prefix(size).firstIndex(of: 0), terminator == size - 1 {
+                model = String(bytes: buffer.prefix(terminator).map { UInt8(bitPattern: $0) }, encoding: .utf8) ?? ""
             }
         }
         let version = ProcessInfo.processInfo.operatingSystemVersion
