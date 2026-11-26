@@ -51,6 +51,9 @@ final class PopoverModel: ObservableObject {
     }
 
     func confirmBattery(replacement: Bool) {
+        monitor.refresh()
+        snapshot = BatteryPresentation.fresh(monitor.snapshot, settings: settings)
+        onChange?()
         guard let history = history, let sample = snapshot,
               sample.percentage != nil, !sample.isStale(at: Date(), maximumAge: 30) else {
             historyStatus = "Fresh battery data and storage required"
@@ -79,6 +82,11 @@ final class PopoverModel: ObservableObject {
     private func recordHistory() {
         guard let history = history, let sample = snapshot, let epoch = capture.epoch else { return }
         let uptime = ProcessInfo.processInfo.systemUptime
+        if capture.clockRegressed(sample, uptime: uptime) {
+            suspendHistory()
+            historyStatus = "Confirm battery after clock change"
+            return
+        }
         guard capture.shouldCapture(sample, uptime: uptime, now: Date()) else { return }
         do {
             try history.append(sample, epoch: epoch)
@@ -138,7 +146,7 @@ final class PopoverModel: ObservableObject {
     func refresh() {
         monitor.refresh()
         snapshot = BatteryPresentation.fresh(monitor.snapshot, settings: settings)
-        if snapshot == nil { suspendHistory() } else { recordHistory() }
+        if snapshot?.percentage == nil { suspendHistory() } else { recordHistory() }
         onChange?()
     }
 
@@ -161,6 +169,7 @@ final class PopoverModel: ObservableObject {
 
     func expireStaleSnapshot() {
         if snapshot != nil && BatteryPresentation.fresh(snapshot, settings: settings) == nil {
+            suspendHistory()
             snapshot = nil
             onChange?()
         }
