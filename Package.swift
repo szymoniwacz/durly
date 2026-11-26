@@ -3,7 +3,8 @@ import PackageDescription
 
 var products: [Product] = [.library(name: "DurlyCore", targets: ["DurlyCore"])]
 var targets: [Target] = [
-    .target(name: "DurlyCore"),
+    .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3", providers: [.apt(["libsqlite3-dev"])]),
+    .target(name: "DurlyCore", dependencies: ["CSQLite"]),
     .testTarget(name: "DurlyCoreTests", dependencies: ["DurlyCore"])
 ]
 #if os(macOS)
