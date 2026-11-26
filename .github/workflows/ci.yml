@@ -42,5 +42,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test portable telemetry core
         run: swift test
+      - name: Test standalone CLT runner
+        run: bash scripts/test-local.sh
       - name: Check packaging script syntax
         run: bash -n scripts/build-app.sh
