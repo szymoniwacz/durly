@@ -5,7 +5,7 @@ import DurlyCore
 final class PopoverModel: ObservableObject {
     @Published private(set) var snapshot: BatterySnapshot?
     @Published private(set) var settings: DisplaySettings
-    @Published private(set) var unavailable = true
+    var unavailable: Bool { snapshot == nil }
 
     private let monitor: BatteryMonitor
     private let store: DisplaySettingsStore
@@ -19,10 +19,7 @@ final class PopoverModel: ObservableObject {
 
     func refresh() {
         monitor.refresh()
-        // Freshness is relative to the configured polling period.
-        let value = monitor.snapshot
-        snapshot = value.flatMap { $0.isStale(maximumAge: Double(settings.refreshSeconds + 5)) ? nil : $0 }
-        unavailable = snapshot == nil
+        snapshot = BatteryPresentation.fresh(monitor.snapshot, settings: settings)
         onChange?()
     }
 
@@ -31,18 +28,26 @@ final class PopoverModel: ObservableObject {
                                    showDetails: showDetails ?? settings.showDetails,
                                    refreshSeconds: refreshSeconds ?? settings.refreshSeconds)
         guard next != settings else { return }
+        let intervalChanged = next.refreshSeconds != settings.refreshSeconds
         settings = next
         store.save(next)
+        if intervalChanged { refresh() } else { expireStaleSnapshot(); onChange?() }
+    }
+
+    func invalidateSnapshot() {
+        snapshot = nil
         onChange?()
     }
 
-    var chargeState: String {
-        guard let s = snapshot else { return "Battery data unavailable" }
-        if s.isCharging == true { return "Charging" }
-        if s.externalPower == true && s.isCharging == false { return "On AC · Not charging" }
-        if s.externalPower == false && s.isCharging == false { return "On battery" }
-        return "Power state unavailable"
+    func expireStaleSnapshot() {
+        if snapshot != nil && BatteryPresentation.fresh(snapshot, settings: settings) == nil {
+            snapshot = nil
+            onChange?()
+        }
     }
+
+    var chargeState: String { BatteryPresentation.chargeState(for: snapshot) }
+    var batterySymbol: String { BatteryPresentation.symbol(for: snapshot?.percentage) }
 
     var healthSeverity: BatteryHealthSeverity { BatteryHealthSeverity.classify(snapshot?.condition) }
 
