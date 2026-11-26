@@ -5,6 +5,13 @@ import SQLite3
 import CSQLite
 #endif
 
+public struct BatteryEpoch: Identifiable, Equatable {
+    public let id: UUID
+    public let createdAt: Date
+    public let number: Int64
+    public let sampleCount: Int64
+}
+
 public enum HistoryError: Error {
     case sqlite(Int32), unsupportedSchema, invalidSample, unknownEpoch
 }
@@ -78,6 +85,38 @@ public final class BatteryHistory {
         }
         return id
     }
+    public func epochs() throws -> [BatteryEpoch] {
+        lock.lock(); defer { lock.unlock() }
+        return try statement("SELECT e.id,e.created_at,e.rowid,(SELECT COUNT(*) FROM sample s WHERE s.epoch=e.id) FROM battery_epoch e ORDER BY e.rowid DESC") { stmt in
+            var values: [BatteryEpoch] = []
+            while true {
+                let result = sqlite3_step(stmt)
+                if result == SQLITE_DONE { return values }
+                guard result == SQLITE_ROW, let value = sqlite3_column_text(stmt, 0),
+                      let id = UUID(uuidString: String(cString: value)) else {
+                    throw HistoryError.sqlite(result)
+                }
+                values.append(BatteryEpoch(id: id,
+                    createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)),
+                    number: sqlite3_column_int64(stmt, 2),
+                    sampleCount: sqlite3_column_int64(stmt, 3)))
+            }
+        }
+    }
+
+    public func observedBaseline(epoch: UUID) throws -> BatterySnapshot? {
+        lock.lock(); defer { lock.unlock() }
+        return try statement("SELECT payload FROM sample WHERE epoch=? ORDER BY id ASC LIMIT 1") { stmt in
+            try bind(epoch.uuidString, 1, stmt)
+            let result = sqlite3_step(stmt)
+            if result == SQLITE_DONE { return nil }
+            guard result == SQLITE_ROW, let value = sqlite3_column_text(stmt, 0) else {
+                throw HistoryError.sqlite(result)
+            }
+            return try JSONDecoder().decode(BatterySnapshot.self, from: Data(String(cString: value).utf8))
+        }
+    }
+
     public func latestEpoch() throws -> UUID? {
         lock.lock(); defer { lock.unlock() }
         return try statement("SELECT id FROM battery_epoch ORDER BY rowid DESC LIMIT 1") { stmt in
