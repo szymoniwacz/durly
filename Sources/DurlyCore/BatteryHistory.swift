@@ -12,6 +12,18 @@ public struct BatteryEpoch: Identifiable, Equatable {
     public let sampleCount: Int64
 }
 
+public enum HistoryEventKind: String, Codable {
+    case recordingStarted, recordingStopped, sleep, telemetryUnavailable, clockChange, replacement, appQuit, manualSMC
+}
+
+public struct HistoryEvent: Identifiable, Equatable, Codable {
+    public let id: Int64
+    public let capturedAt: Date
+    public let kind: HistoryEventKind
+    public let detail: String
+    public let session: UUID?
+}
+
 public enum HistoryError: Error {
     case sqlite(Int32), unsupportedSchema, invalidSample, unknownEpoch
 }
@@ -39,7 +51,12 @@ public final class BatteryHistory {
                     try execute("CREATE TABLE battery_epoch(id TEXT PRIMARY KEY, created_at REAL NOT NULL)")
                     try execute("CREATE TABLE sample(id INTEGER PRIMARY KEY, epoch TEXT NOT NULL REFERENCES battery_epoch(id), captured_at REAL NOT NULL, payload TEXT NOT NULL, UNIQUE(epoch,captured_at))")
                     try execute("PRAGMA user_version=1")
-                } else if version != 1 { throw HistoryError.unsupportedSchema }
+                }
+                if version == 0 || version == 1 {
+                    try execute("CREATE TABLE history_event(id INTEGER PRIMARY KEY, epoch TEXT NOT NULL REFERENCES battery_epoch(id), captured_at REAL NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL, session TEXT)")
+                    try execute("CREATE INDEX history_event_epoch ON history_event(epoch,id)")
+                    try execute("PRAGMA user_version=2")
+                } else if version != 2 { throw HistoryError.unsupportedSchema }
                 try execute("COMMIT")
             } catch { try? execute("ROLLBACK"); throw error }
         } catch { sqlite3_close(db); throw error }
@@ -85,6 +102,41 @@ public final class BatteryHistory {
         }
         return id
     }
+    public func appendEvent(epoch: UUID, at date: Date, kind: HistoryEventKind, detail: String = "", session: UUID? = nil) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard date.timeIntervalSince1970.isFinite else { throw HistoryError.invalidSample }
+        try statement("INSERT INTO history_event(epoch,captured_at,kind,detail,session) VALUES (?,?,?,?,?)") { stmt in
+            try bind(epoch.uuidString, 1, stmt)
+            try check(sqlite3_bind_double(stmt, 2, date.timeIntervalSince1970))
+            try bind(kind.rawValue, 3, stmt)
+            try bind(detail, 4, stmt)
+            if let session = session { try bind(session.uuidString, 5, stmt) }
+            else { try check(sqlite3_bind_null(stmt, 5)) }
+            try done(stmt)
+        }
+    }
+
+    public func events(epoch: UUID, limit: Int = 1000) throws -> [HistoryEvent] {
+        lock.lock(); defer { lock.unlock() }
+        guard (1...10000).contains(limit) else { throw HistoryError.invalidSample }
+        return try statement("SELECT id,captured_at,kind,detail,session FROM history_event WHERE epoch=? ORDER BY id DESC LIMIT ?") { stmt in
+            try bind(epoch.uuidString, 1, stmt)
+            try check(sqlite3_bind_int64(stmt, 2, Int64(limit)))
+            var values: [HistoryEvent] = []
+            while true {
+                let result = sqlite3_step(stmt)
+                if result == SQLITE_DONE { return values }
+                guard result == SQLITE_ROW, let kind = sqlite3_column_text(stmt, 2),
+                      let eventKind = HistoryEventKind(rawValue: String(cString: kind)),
+                      let detail = sqlite3_column_text(stmt, 3) else { throw HistoryError.sqlite(result) }
+                let session = sqlite3_column_text(stmt, 4).flatMap { UUID(uuidString: String(cString: $0)) }
+                values.append(HistoryEvent(id: sqlite3_column_int64(stmt, 0),
+                    capturedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)),
+                    kind: eventKind, detail: String(cString: detail), session: session))
+            }
+        }
+    }
+
     public func epochs() throws -> [BatteryEpoch] {
         lock.lock(); defer { lock.unlock() }
         return try statement("SELECT e.id,e.created_at,e.rowid,(SELECT COUNT(*) FROM sample s WHERE s.epoch=e.id) FROM battery_epoch e ORDER BY e.rowid DESC") { stmt in
