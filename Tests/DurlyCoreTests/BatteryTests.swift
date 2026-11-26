@@ -1,6 +1,8 @@
 import Foundation
+#if !MANUAL_TESTS
 import XCTest
-@testable import DurlyCore
+#endif
+import DurlyCore
 
 final class BatteryTests: XCTestCase {
     func testSeparatesDisplayedAndRawPercentagesAndDecodesSignedCurrent() {
