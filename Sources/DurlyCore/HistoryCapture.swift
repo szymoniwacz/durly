@@ -17,6 +17,10 @@ public struct HistoryCapture {
         last = nil
         lastUptime = nil
     }
+    public func clockRegressed(_ sample: BatterySnapshot, uptime: TimeInterval) -> Bool {
+        guard let last = last, let previous = lastUptime else { return false }
+        return uptime < previous || sample.capturedAt < last.capturedAt
+    }
     public func shouldCapture(_ sample: BatterySnapshot, uptime: TimeInterval, now: Date) -> Bool {
         guard epoch != nil, uptime.isFinite, uptime >= 0,
               !sample.isStale(at: now, maximumAge: 30),
