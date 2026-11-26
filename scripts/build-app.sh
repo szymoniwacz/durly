@@ -13,7 +13,7 @@ swiftc -target x86_64-apple-macos12.0 -O -parse-as-library \
   Sources/DurlyCore/*.swift -o "$build/DurlyCore.o"
 swiftc -target x86_64-apple-macos12.0 -O -I "$build" \
   Sources/Durly/*.swift "$build/DurlyCore.o" \
-  -framework IOKit -framework AppKit -framework SwiftUI -o "$build/Durly"
+  -framework IOKit -framework AppKit -framework SwiftUI -lsqlite3 -o "$build/Durly"
 app="$PWD/dist/Durly.app"
 mkdir -p "$app/Contents/MacOS"
 cp "$build/Durly" "$app/Contents/MacOS/Durly"

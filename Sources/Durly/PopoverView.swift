@@ -6,6 +6,10 @@ struct PopoverView: View {
     let maximumHeight: CGFloat
     let quit: () -> Void
     @State private var showSettings = false
+    @State private var confirmReplacement = false
+    @State private var showHistory = false
+    @State private var pendingDelete: UUID?
+    @State private var confirmDelete = false
     @State private var contentHeight: CGFloat = 1
     @Environment(\.colorScheme) private var colorScheme
 
@@ -26,6 +30,8 @@ struct PopoverView: View {
                 Group {
                     if showSettings {
                         settingsPanel
+                    } else if showHistory {
+                        historyDetails
                     } else {
                         overview
                     }
@@ -94,10 +100,138 @@ struct PopoverView: View {
                 Text(model.controlExplanation)
                     .font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            Toggle("Show diagnostics", isOn: Binding(get: { model.settings.showDetails },
-                                                    set: { model.update(showDetails: $0) }))
-            if model.settings.showDetails {
-                diagnostics
+            Group {
+                historyPanel
+                Toggle("Show diagnostics", isOn: Binding(get: { model.settings.showDetails },
+                                                        set: { model.update(showDetails: $0) }))
+                if model.settings.showDetails {
+                    diagnostics
+                }
+            }
+        }
+    }
+
+    private var historyPanel: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Battery history").font(.subheadline.weight(.medium))
+            Text(model.historyStatus).font(.caption).foregroundColor(.secondary)
+            Button(model.recordingHistory ? "Stop recording" : "Start recording") {
+                if model.recordingHistory {
+                    model.stopRecording()
+                } else {
+                    model.confirmBattery(replacement: false)
+                }
+            }.disabled(!model.recordingHistory && model.unavailable)
+            if model.previousEpochAvailable && !model.recordingHistory {
+                Text("Start only if the same battery is installed.").font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            if model.previousEpochAvailable {
+                Button("Register replacement battery") { confirmReplacement = true }
+                    .disabled(model.unavailable || model.smcProbeRunning)
+                    .alert("Start a separate battery history?", isPresented: $confirmReplacement) {
+                        Button("Cancel", role: .cancel) {}
+                        Button("Confirm replacement") { model.confirmBattery(replacement: true) }
+                    } message: { Text("Only confirm if the physical battery was replaced. Previous history is preserved. Recording starts for the new battery.") }
+                Button("View history") {
+                    model.loadHistory()
+                    showHistory = true
+                }
+            }
+        }
+    }
+
+    private var historyDetails: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Battery history").font(.headline)
+                Spacer()
+                Button("Back") { showHistory = false }
+            }
+            Picker("Battery", selection: Binding(get: { model.viewedEpoch }, set: { model.selectHistory($0) })) {
+                ForEach(model.historyEpochs) { epoch in
+                    Text("Battery " + String(epoch.number) + (epoch.id == model.previousEpoch ? " · latest" : " · archived"))
+                        .tag(Optional(epoch.id))
+                }
+            }
+            if let epoch = model.historyEpochs.first(where: { $0.id == model.viewedEpoch }) {
+                Text("Registered " + DateFormatter.localizedString(from: epoch.createdAt, dateStyle: .short, timeStyle: .none) + " · " + String(epoch.sampleCount) + " samples")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            Group {
+                HStack {
+                    Button("Export history", action: model.exportSelectedHistory)
+                        .disabled(model.viewedEpoch == nil)
+                    if let epoch = model.viewedEpoch, epoch != model.previousEpoch {
+                        Button("Delete archive") {
+                            pendingDelete = epoch
+                            confirmDelete = true
+                        }
+                        .alert("Permanently delete this battery archive?", isPresented: $confirmDelete) {
+                            Button("Cancel", role: .cancel) { pendingDelete = nil }
+                            Button("Delete", role: .destructive) {
+                                if let id = pendingDelete { model.deleteSelectedArchive(id) }
+                                pendingDelete = nil
+                            }
+                        } message: { Text("All saved samples and events for this archived battery will be deleted. Export first if needed.") }
+                    }
+                }
+                if let status = model.historyActionStatus {
+                    Text(status).font(.caption)
+                }
+            }
+            if let baseline = model.observedBaseline {
+                Text("First observed capacity: " + number(baseline.maxCapacity, " mAh"))
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            if !model.recentEvents.isEmpty {
+                DisclosureGroup("Recent monitoring events") {
+                    ForEach(model.recentEvents) { event in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(DateFormatter.localizedString(from: event.capturedAt, dateStyle: .short, timeStyle: .medium)).font(.caption)
+                            Text(event.kind.rawValue).font(.callout)
+                            if !event.detail.isEmpty { Text(event.detail).font(.caption).textSelection(.enabled) }
+                        }
+                    }
+                }
+            }
+            Text("Showing " + String(model.recentHistory.count) + " most recent saved samples")
+                .font(.caption).foregroundColor(.secondary)
+            if model.historyReadError {
+                Text("History could not be read.").foregroundColor(.secondary)
+            } else if model.recentHistory.isEmpty {
+                Text("No recorded samples yet.").foregroundColor(.secondary)
+            } else {
+                ForEach(model.recentHistory, id: \.capturedAt) { sample in
+                    DisclosureGroup {
+                        VStack(alignment: .leading, spacing: 4) {
+                            metric("Full-charge capacity", number(sample.maxCapacity, " mAh"))
+                            metric("Current capacity", number(sample.currentCapacity, " mAh"))
+                            metric("Design capacity", number(sample.designCapacity, " mAh"))
+                            metric("Temperature", decimal(sample.temperatureCelsius, " °C"))
+                            metric("Current", number(sample.currentMilliamps, " mA"))
+                            metric("Voltage", number(sample.voltageMillivolts, " mV"))
+                            metric("Cycles", number(sample.cycles))
+                            metric("AC / Charging", yesNo(sample.externalPower) + " / " + yesNo(sample.isCharging))
+                            Group {
+                                metric("Health", sample.condition ?? "Unavailable")
+                                metric("Raw charge ratio", decimal(sample.rawChargePercentage, "%"))
+                                metric("Capacity retention", decimal(sample.capacityRetention, "%"))
+                            }
+                        }.padding(.vertical, 4)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(DateFormatter.localizedString(from: sample.capturedAt, dateStyle: .short, timeStyle: .medium))
+                                .font(.caption).foregroundColor(.secondary)
+                            Text(number(sample.percentage, "%") + "  ·  " + number(sample.maxCapacity, " mAh") + "  ·  " + decimal(sample.temperatureCelsius, " °C"))
+                                .font(.callout).monospacedDigit()
+                        }
+                    }
+                    Divider()
+                }
+                if model.canShowMoreHistory {
+                    Button("Show older samples", action: model.showMoreHistory)
+                }
             }
         }
     }
@@ -150,7 +284,7 @@ struct PopoverView: View {
                     Text("\(seconds) seconds").tag(seconds)
                 }
             }
-            Text("Settings are saved automatically on this Mac. They affect display only.")
+            Text("Settings are saved automatically on this Mac. History checks telemetry every 5 seconds while awake and saves only changes.")
                 .font(.caption).foregroundColor(.secondary)
             Button("Back") { showSettings = false }
         }

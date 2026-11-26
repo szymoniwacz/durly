@@ -40,6 +40,8 @@ jobs:
     container: swift:5.7.3
     steps:
       - uses: actions/checkout@v4
+      - name: Install SQLite headers
+        run: apt-get update && apt-get install -y libsqlite3-dev
       - name: Test portable telemetry core
         run: swift test
       - name: Test standalone CLT runner

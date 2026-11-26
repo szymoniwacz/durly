@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import UniformTypeIdentifiers
 import Combine
 import Dispatch
 import DurlyCore
@@ -19,6 +21,65 @@ final class PopoverModel: ObservableObject {
             ? "Charge control is not verified for this Mac. Durly does not change charging."
             : "Charge control is under investigation for this Mac. Durly does not change charging."
     }
+    @Published private(set) var historyStatus = "History not initialized"
+    @Published private(set) var previousEpochAvailable = false
+    @Published private(set) var recordingHistory = false
+    @Published private(set) var recentHistory: [BatterySnapshot] = []
+    @Published private(set) var historyReadError = false
+    private var history: BatteryHistory?
+    private var capture = HistoryCapture()
+    private var recordingSession: UUID?
+    @Published private(set) var recentEvents: [HistoryEvent] = []
+    @Published private(set) var previousEpoch: UUID?
+    @Published private(set) var historyEpochs: [BatteryEpoch] = []
+    @Published private(set) var viewedEpoch: UUID?
+    @Published private(set) var observedBaseline: BatterySnapshot?
+    private var historyLimit = 20
+    @Published private(set) var historyActionStatus: String?
+
+    func exportSelectedHistory() {
+        guard let history = history, let epoch = viewedEpoch else { return }
+        let panel = NSSavePanel()
+        panel.title = "Export battery history"
+        panel.nameFieldStringValue = "Durly-" + epoch.uuidString + ".jsonl"
+        panel.allowedContentTypes = [.init(filenameExtension: "jsonl") ?? .plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try history.export(epoch: epoch, to: url)
+            historyActionStatus = "History exported."
+        } catch {
+            historyActionStatus = "Export failed. Choose a new file name."
+        }
+    }
+
+    func deleteSelectedArchive(_ epoch: UUID) {
+        guard let history = history, epoch != previousEpoch else { return }
+        do {
+            try history.deleteArchivedEpoch(epoch)
+            selectHistory(previousEpoch)
+            historyActionStatus = "Archived battery deleted."
+        } catch {
+            historyActionStatus = "Deletion failed. History preserved."
+        }
+    }
+
+    func selectHistory(_ id: UUID?) {
+        historyActionStatus = nil
+        viewedEpoch = id
+        historyLimit = 20
+        loadHistory()
+    }
+
+    func showMoreHistory() {
+        historyLimit = min(historyLimit + 20, 10000)
+        loadHistory()
+    }
+
+    var canShowMoreHistory: Bool {
+        guard let epoch = historyEpochs.first(where: { $0.id == viewedEpoch }) else { return false }
+        return Int64(recentHistory.count) < epoch.sampleCount && historyLimit < 10000
+    }
+
     private let monitor: BatteryMonitor
     private let store: DisplaySettingsStore
     var onChange: (() -> Void)?
@@ -31,11 +92,135 @@ final class PopoverModel: ObservableObject {
         self.monitor = BatteryMonitor(provider: provider)
         self.store = store
         self.settings = store.load()
+        do {
+            let folder = try FileManager.default.url(for: .applicationSupportDirectory,
+                in: .userDomainMask, appropriateFor: nil, create: true)
+                .appendingPathComponent("Durly", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            history = try BatteryHistory(url: folder.appendingPathComponent("history.sqlite"))
+            previousEpoch = try history?.latestEpoch()
+            previousEpochAvailable = previousEpoch != nil
+            historyStatus = "Confirm battery to start recording"
+        } catch { history = nil; historyStatus = "History unavailable: storage initialization failed" }
+    }
+
+    func stopRecording() {
+        endRecording(.recordingStopped, status: "Recording stopped")
+    }
+
+    private func endRecording(_ kind: HistoryEventKind, status: String) {
+        let epoch = capture.epoch
+        let session = recordingSession
+        capture.suspend()
+        recordingSession = nil
+        recordingHistory = false
+        guard let epoch = epoch, let history = history else { return }
+        do {
+            try history.appendEvent(epoch: epoch, at: Date(), kind: kind, session: session)
+            historyStatus = status
+            loadHistory()
+        } catch {
+            historyStatus = "Recording paused: could not save end event"
+        }
+    }
+
+    func finishRecording() {
+        endRecording(.appQuit, status: "Recording stopped")
+    }
+
+    func loadHistory() {
+        guard let history = history else {
+            recentHistory = []
+            recentEvents = []
+            observedBaseline = nil
+            historyReadError = true
+            return
+        }
+        do {
+            historyEpochs = try history.epochs()
+            if viewedEpoch == nil { viewedEpoch = previousEpoch }
+            guard let epoch = viewedEpoch else {
+                recentHistory = []
+                observedBaseline = nil
+                return
+            }
+            recentHistory = try history.samples(epoch: epoch, limit: historyLimit)
+            recentEvents = try history.events(epoch: epoch, limit: 20)
+            observedBaseline = try history.observedBaseline(epoch: epoch)
+            historyReadError = false
+        } catch {
+            recentHistory = []
+            recentEvents = []
+            observedBaseline = nil
+            historyReadError = true
+        }
+    }
+
+    func confirmBattery(replacement: Bool) {
+        guard !smcProbeRunning, replacement || !recordingHistory else { return }
+        if replacement { endRecording(.replacement, status: "Confirm replacement battery") }
+        monitor.refresh()
+        snapshot = BatteryPresentation.fresh(monitor.snapshot, settings: settings)
+        onChange?()
+        guard let history = history, let sample = snapshot,
+              sample.percentage != nil, !sample.isStale(at: Date(), maximumAge: 30) else {
+            historyStatus = "Fresh battery data and storage required"
+            return
+        }
+        capture.suspend()
+        recordingHistory = false
+        do {
+            let id: UUID
+            if replacement || previousEpoch == nil {
+                id = try history.createEpoch(at: sample.capturedAt)
+            } else if let previous = previousEpoch {
+                id = previous
+            } else { return }
+            previousEpoch = id
+            previousEpochAvailable = true
+            if replacement || viewedEpoch == nil { viewedEpoch = id; historyLimit = 20 }
+            let session = UUID()
+            try history.appendEvent(epoch: id, at: sample.capturedAt, kind: .recordingStarted,
+                detail: replacement ? "Replacement confirmed" : "Battery confirmed", session: session)
+            recordingSession = session
+            capture.select(id)
+            recordingHistory = true
+            recordHistory()
+            loadHistory()
+        } catch {
+            capture.suspend()
+            historyStatus = "History unavailable: battery selection failed"
+        }
+    }
+
+    private func recordHistory() {
+        guard let history = history, let sample = snapshot, let epoch = capture.epoch, let session = recordingSession else { return }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        if capture.clockRegressed(sample, uptime: uptime) {
+            endRecording(.clockChange, status: "Confirm battery after clock change")
+            return
+        }
+        guard capture.shouldCapture(sample, uptime: uptime, now: Date()) else { return }
+        do {
+            try history.append(sample, epoch: epoch, session: session)
+            capture.recorded(sample, uptime: uptime)
+            loadHistory()
+            historyStatus = "Recording · last saved " + DateFormatter.localizedString(from: sample.capturedAt, dateStyle: .none, timeStyle: .medium)
+        } catch {
+            endRecording(.telemetryUnavailable, status: "Recording paused: storage error. Confirm battery to retry.")
+        }
+    }
+
+    func suspendHistory(kind: HistoryEventKind = .telemetryUnavailable) {
+        endRecording(kind, status: "Confirm battery after sleep or missing data")
     }
 
     // Explicit, one-shot diagnostic only; never poll the private driver.
     func probeSMC() {
         guard canProbeSMC, !smcProbeRunning, !smcProbeBlocked else { return }
+        let probeEpoch = capture.epoch
+        let probeSession = recordingSession
+        let probeStarted = Date()
         smcProbeRunning = true
         smcProbeReport = nil
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -64,9 +249,23 @@ final class PopoverModel: ObservableObject {
                 blocked = (error as? SMCReadError) == .sessionBlocked
             }
             DispatchQueue.main.async { [weak self] in
-                self?.smcProbeReport = report
-                self?.smcProbeBlocked = blocked
-                self?.smcProbeRunning = false
+                guard let self = self else { return }
+                self.smcProbeReport = report
+                self.smcProbeBlocked = blocked
+                self.smcProbeRunning = false
+                if let epoch = probeEpoch, let session = probeSession,
+                   self.capture.epoch == epoch, self.recordingSession == session,
+                   let history = self.history {
+                    do {
+                        try history.appendEvent(epoch: epoch, at: probeStarted, kind: .manualSMC,
+                            detail: report, session: session)
+                        self.loadHistory()
+                    } catch {
+                        self.endRecording(.telemetryUnavailable, status: "Recording paused: diagnostic save failed")
+                    }
+                } else {
+                    self.smcProbeReport = report + "\nNot archived: no continuous confirmed recording session."
+                }
             }
         }
     }
@@ -74,6 +273,7 @@ final class PopoverModel: ObservableObject {
     func refresh() {
         monitor.refresh()
         snapshot = BatteryPresentation.fresh(monitor.snapshot, settings: settings)
+        if snapshot?.percentage == nil { suspendHistory() } else { recordHistory() }
         onChange?()
     }
 
@@ -89,12 +289,14 @@ final class PopoverModel: ObservableObject {
     }
 
     func invalidateSnapshot() {
+        suspendHistory(kind: .sleep)
         snapshot = nil
         onChange?()
     }
 
     func expireStaleSnapshot() {
         if snapshot != nil && BatteryPresentation.fresh(snapshot, settings: settings) == nil {
+            suspendHistory()
             snapshot = nil
             onChange?()
         }

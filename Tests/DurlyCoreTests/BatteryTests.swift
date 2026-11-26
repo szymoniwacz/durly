@@ -4,8 +4,185 @@ import Dispatch
 import XCTest
 #endif
 import DurlyCore
+#if canImport(SQLite3)
+import SQLite3
+#else
+import CSQLite
+#endif
 
 final class BatteryTests: XCTestCase {
+    func testHistoryMigratesExistingDatabaseAndExportsArchive() {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let url = folder.appendingPathComponent("history.sqlite")
+            let old = UUID()
+            let date = Date(timeIntervalSince1970: 1234.125)
+            let sample = BatteryDecoder.decode(registry: ["MaxCapacity": 4552], powerSource: [:], capturedAt: date)
+            let payload = String(decoding: try JSONEncoder().encode(sample), as: UTF8.self)
+            var raw: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(url.path, &raw), SQLITE_OK)
+            let sql = "CREATE TABLE battery_epoch(id TEXT PRIMARY KEY, created_at REAL NOT NULL);" +
+                "CREATE TABLE sample(id INTEGER PRIMARY KEY, epoch TEXT NOT NULL REFERENCES battery_epoch(id), captured_at REAL NOT NULL, payload TEXT NOT NULL, UNIQUE(epoch,captured_at));" +
+                "INSERT INTO battery_epoch VALUES ('" + old.uuidString + "',1234.125);" +
+                "INSERT INTO sample(epoch,captured_at,payload) VALUES ('" + old.uuidString + "',1234.125,'" + payload + "');" +
+                "PRAGMA user_version=1;"
+            XCTAssertEqual(sqlite3_exec(raw, sql, nil, nil, nil), SQLITE_OK)
+            XCTAssertEqual(sqlite3_close(raw), SQLITE_OK)
+            let store = try BatteryHistory(url: url)
+            let migrated = try store.samples(epoch: old)
+            XCTAssertEqual(migrated, [sample])
+            let current = try store.createEpoch(at: date.addingTimeInterval(60))
+            let session = UUID()
+            try store.appendEvent(epoch: current, at: date, kind: .recordingStarted, session: session)
+            try store.append(sample, epoch: current, session: session)
+            try store.appendEvent(epoch: old, at: date, kind: .recordingStopped)
+            let output = folder.appendingPathComponent("archive.jsonl")
+            try store.export(epoch: old, to: output)
+            let lines = try String(contentsOf: output, encoding: .utf8).split(separator: "\n")
+            XCTAssertEqual(lines.count, 3)
+            let legacy = try JSONSerialization.jsonObject(with: Data(lines[1].utf8)) as? [String: Any]
+            XCTAssertNil(legacy?["session"])
+            let currentOutput = folder.appendingPathComponent("current.jsonl")
+            let reopened = try BatteryHistory(url: url)
+            try reopened.export(epoch: current, to: currentOutput)
+            let currentLines = try String(contentsOf: currentOutput, encoding: .utf8).split(separator: "\n")
+            XCTAssertEqual(currentLines.count, 3)
+            for line in currentLines.dropFirst() {
+                let record = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+                XCTAssertEqual(record?["session"] as? String, session.uuidString)
+            }
+            XCTAssertTrue(lines.allSatisfy { (try? JSONSerialization.jsonObject(with: Data($0.utf8))) != nil })
+            do {
+                try store.export(epoch: old, to: output)
+                XCTAssertTrue(false)
+            } catch {}
+            do {
+                try store.deleteArchivedEpoch(current)
+                XCTAssertTrue(false)
+            } catch {}
+            try store.deleteArchivedEpoch(old)
+            let remaining = try store.epochs()
+            XCTAssertEqual(remaining.map { $0.id }, [current])
+            let removed = try store.samples(epoch: old)
+            let events = try store.events(epoch: old)
+            let preserved = try store.samples(epoch: current)
+            XCTAssertTrue(removed.isEmpty)
+            XCTAssertTrue(events.isEmpty)
+            XCTAssertEqual(preserved, [sample])
+        } catch { XCTAssertTrue(false) }
+    }
+
+    func testHistoryRejectsFutureSchemaAndInvalidPath() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var raw: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &raw), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(raw, "PRAGMA user_version=99", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(raw), SQLITE_OK)
+        do {
+            _ = try BatteryHistory(url: url)
+            XCTAssertTrue(false)
+        } catch {}
+        do {
+            _ = try BatteryHistory(url: url.appendingPathComponent("invalid.sqlite"))
+            XCTAssertTrue(false)
+        } catch {}
+    }
+
+    func testHistoryEventsPersistAndRemainSeparated() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            let store = try BatteryHistory(url: url)
+            let date = Date(timeIntervalSince1970: 1000.125)
+            let old = try store.createEpoch(at: date)
+            let new = try store.createEpoch(at: date.addingTimeInterval(100))
+            let session = UUID()
+            try store.appendEvent(epoch: old, at: date, kind: .recordingStarted, session: session)
+            try store.appendEvent(epoch: old, at: date.addingTimeInterval(1), kind: .manualSMC, detail: "BCLM: 76", session: session)
+            try store.appendEvent(epoch: old, at: date.addingTimeInterval(2), kind: .sleep, session: session)
+            let reopened = try BatteryHistory(url: url)
+            let events = try reopened.events(epoch: old)
+            let newEvents = try reopened.events(epoch: new)
+            XCTAssertEqual(events.map { $0.kind }, [.sleep, .manualSMC, .recordingStarted])
+            XCTAssertEqual(events.map { $0.session }, [session, session, session])
+            XCTAssertEqual(events.last?.capturedAt, date)
+            XCTAssertEqual(events[1].detail, "BCLM: 76")
+            XCTAssertTrue(newEvents.isEmpty)
+            do {
+                try reopened.appendEvent(epoch: UUID(), at: date, kind: .sleep)
+                XCTAssertTrue(false)
+            } catch {}
+        } catch { XCTAssertTrue(false) }
+    }
+
+    func testHistoryCaptureRequiresConfirmationAndBoundsSampling() {
+        var gate = HistoryCapture()
+        let t = Date(timeIntervalSince1970: 1000)
+        func sample(_ offset: Double, _ ac: Bool) -> BatterySnapshot {
+            BatteryDecoder.decode(registry: ["ExternalConnected": ac],
+                powerSource: ["Current Capacity": 80, "Max Capacity": 100],
+                capturedAt: t.addingTimeInterval(offset))
+        }
+        let first = sample(0, true)
+        XCTAssertTrue(!gate.shouldCapture(first, uptime: 100, now: t))
+        gate.select(UUID())
+        XCTAssertTrue(gate.shouldCapture(first, uptime: 100, now: t))
+        gate.recorded(first, uptime: 100)
+        XCTAssertTrue(!gate.shouldCapture(sample(10, true), uptime: 110, now: t.addingTimeInterval(10)))
+        XCTAssertTrue(gate.shouldCapture(sample(10, false), uptime: 110, now: t.addingTimeInterval(10)))
+        XCTAssertTrue(!gate.shouldCapture(sample(60, true), uptime: 160, now: t.addingTimeInterval(60)))
+        XCTAssertTrue(!gate.shouldCapture(sample(3600, true), uptime: 3700, now: t.addingTimeInterval(3600)))
+        XCTAssertTrue(!gate.shouldCapture(first, uptime: 161, now: t.addingTimeInterval(61)))
+        let changed = BatteryDecoder.decode(registry: ["ExternalConnected": true, "Voltage": 11800],
+            powerSource: ["Current Capacity": 80, "Max Capacity": 100], capturedAt: t.addingTimeInterval(5))
+        XCTAssertTrue(gate.shouldCapture(changed, uptime: 105, now: t.addingTimeInterval(5)))
+        gate.suspend()
+        XCTAssertTrue(!gate.shouldCapture(sample(60, true), uptime: 160, now: t.addingTimeInterval(60)))
+    }
+
+    func testHistoryPersistenceAndEpochSeparation() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            let date = Date(timeIntervalSince1970: 1000)
+            let old = BatteryDecoder.decode(registry: ["MaxCapacity": 4552], powerSource: [:], capturedAt: date)
+            let new = BatteryDecoder.decode(registry: ["MaxCapacity": 8600], powerSource: [:], capturedAt: date)
+            let store = try BatteryHistory(url: url)
+            let a = try store.createEpoch(at: date)
+            let b = try store.createEpoch(at: date)
+            try store.append(old, epoch: a)
+            try store.append(new, epoch: b)
+            let reopened = try BatteryHistory(url: url)
+            let latest = try reopened.latestEpoch()
+            XCTAssertEqual(latest, b)
+            let oldSamples = try reopened.samples(epoch: a)
+            let newSamples = try reopened.samples(epoch: b)
+            XCTAssertEqual(oldSamples, [old])
+            XCTAssertEqual(newSamples, [new])
+            XCTAssertNil(newSamples.first?.temperatureCelsius)
+            do {
+                try reopened.append(new, epoch: a)
+                XCTAssertTrue(false)
+            } catch {}
+            do {
+                try reopened.append(new, epoch: UUID())
+                XCTAssertTrue(false)
+            } catch {}
+            let epochs = try reopened.epochs()
+            XCTAssertEqual(epochs.map { $0.id }, [b, a])
+            XCTAssertEqual(epochs.map { $0.sampleCount }, [1, 1])
+            let baseline = try reopened.observedBaseline(epoch: a)
+            XCTAssertEqual(baseline, old)
+            let unchanged = try reopened.samples(epoch: a)
+            XCTAssertEqual(unchanged, [old])
+        } catch {
+            XCTAssertTrue(false)
+        }
+    }
+
     func testSeparatesDisplayedAndRawPercentagesAndDecodesSignedCurrent() {
         let snapshot = BatteryDecoder.decode(registry: [
             "CurrentCapacity": 3494, "MaxCapacity": 4552, "DesignCapacity": 8600,
