@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import UniformTypeIdentifiers
 import Combine
 import Dispatch
 import DurlyCore
@@ -33,8 +35,36 @@ final class PopoverModel: ObservableObject {
     @Published private(set) var viewedEpoch: UUID?
     @Published private(set) var observedBaseline: BatterySnapshot?
     private var historyLimit = 20
+    @Published private(set) var historyActionStatus: String?
+
+    func exportSelectedHistory() {
+        guard let history = history, let epoch = viewedEpoch else { return }
+        let panel = NSSavePanel()
+        panel.title = "Export battery history"
+        panel.nameFieldStringValue = "Durly-" + epoch.uuidString + ".jsonl"
+        panel.allowedContentTypes = [.init(filenameExtension: "jsonl") ?? .plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try history.export(epoch: epoch, to: url)
+            historyActionStatus = "History exported."
+        } catch {
+            historyActionStatus = "Export failed. Choose a new file name."
+        }
+    }
+
+    func deleteSelectedArchive(_ epoch: UUID) {
+        guard let history = history, epoch != previousEpoch else { return }
+        do {
+            try history.deleteArchivedEpoch(epoch)
+            selectHistory(previousEpoch)
+            historyActionStatus = "Archived battery deleted."
+        } catch {
+            historyActionStatus = "Deletion failed. History preserved."
+        }
+    }
 
     func selectHistory(_ id: UUID?) {
+        historyActionStatus = nil
         viewedEpoch = id
         historyLimit = 20
         loadHistory()
