@@ -56,7 +56,11 @@ public final class BatteryHistory {
                     try execute("CREATE TABLE history_event(id INTEGER PRIMARY KEY, epoch TEXT NOT NULL REFERENCES battery_epoch(id), captured_at REAL NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL, session TEXT)")
                     try execute("CREATE INDEX history_event_epoch ON history_event(epoch,id)")
                     try execute("PRAGMA user_version=2")
-                } else if version != 2 { throw HistoryError.unsupportedSchema }
+                }
+                if (0...2).contains(version) {
+                    try execute("ALTER TABLE sample ADD COLUMN session TEXT")
+                    try execute("PRAGMA user_version=3")
+                } else if version != 3 { throw HistoryError.unsupportedSchema }
                 try execute("COMMIT")
             } catch { try? execute("ROLLBACK"); throw error }
         } catch { sqlite3_close(db); throw error }
@@ -162,9 +166,9 @@ public final class BatteryHistory {
                 guard sqlite3_step(stmt) == SQLITE_ROW else { throw HistoryError.unknownEpoch }
                 try write(["type": "metadata", "version": 1, "epoch": epoch.uuidString,
                            "registeredUnixSeconds": sqlite3_column_double(stmt, 0),
-                           "coverage": "Legacy samples may lack session boundaries"])
+                           "coverage": "Samples without session are legacy; unclosed sessions have unknown end. Do not infer continuous coverage."])
             }
-            try statement("SELECT id,captured_at,payload FROM sample WHERE epoch=? ORDER BY id") { stmt in
+            try statement("SELECT id,captured_at,payload,session FROM sample WHERE epoch=? ORDER BY id") { stmt in
                 try bind(epoch.uuidString, 1, stmt)
                 while true {
                     let result = sqlite3_step(stmt)
@@ -173,8 +177,10 @@ public final class BatteryHistory {
                         throw HistoryError.sqlite(result)
                     }
                     let payload = try JSONSerialization.jsonObject(with: Data(String(cString: value).utf8))
-                    try write(["type": "sample", "id": sqlite3_column_int64(stmt, 0),
-                               "unixSeconds": sqlite3_column_double(stmt, 1), "snapshot": payload])
+                    var row: [String: Any] = ["type": "sample", "id": sqlite3_column_int64(stmt, 0),
+                               "unixSeconds": sqlite3_column_double(stmt, 1), "snapshot": payload]
+                    if let session = sqlite3_column_text(stmt, 3) { row["session"] = String(cString: session) }
+                    try write(row)
                 }
             }
             try statement("SELECT id,captured_at,kind,detail,session FROM history_event WHERE epoch=? ORDER BY id") { stmt in
@@ -268,15 +274,17 @@ public final class BatteryHistory {
 
     // The caller must explicitly select a confirmed epoch. Never infer replacement
     // from capacity or cycles. A duplicate timestamp is rejected, not overwritten.
-    public func append(_ sample: BatterySnapshot, epoch: UUID) throws {
+    public func append(_ sample: BatterySnapshot, epoch: UUID, session: UUID? = nil) throws {
         lock.lock(); defer { lock.unlock() }
         guard sample.capturedAt.timeIntervalSince1970.isFinite else { throw HistoryError.invalidSample }
         let data = try JSONEncoder().encode(sample)
         guard let payload = String(data: data, encoding: .utf8) else { throw HistoryError.invalidSample }
-        try statement("INSERT INTO sample(epoch,captured_at,payload) VALUES (?,?,?)") { stmt in
+        try statement("INSERT INTO sample(epoch,captured_at,payload,session) VALUES (?,?,?,?)") { stmt in
             try bind(epoch.uuidString, 1, stmt)
             try check(sqlite3_bind_double(stmt, 2, sample.capturedAt.timeIntervalSince1970))
             try bind(payload, 3, stmt)
+            if let session = session { try bind(session.uuidString, 4, stmt) }
+            else { try check(sqlite3_bind_null(stmt, 4)) }
             try done(stmt)
         }
     }
