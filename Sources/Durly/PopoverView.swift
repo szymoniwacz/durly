@@ -6,6 +6,7 @@ struct PopoverView: View {
     let maximumHeight: CGFloat
     let quit: () -> Void
     @State private var showSettings = false
+    @State private var confirmReplacement = false
     @State private var contentHeight: CGFloat = 1
     @Environment(\.colorScheme) private var colorScheme
 
@@ -94,10 +95,31 @@ struct PopoverView: View {
                 Text(model.controlExplanation)
                     .font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            historyPanel
             Toggle("Show diagnostics", isOn: Binding(get: { model.settings.showDetails },
                                                     set: { model.update(showDetails: $0) }))
             if model.settings.showDetails {
                 diagnostics
+            }
+        }
+    }
+
+    private var historyPanel: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Battery history").font(.subheadline.weight(.medium))
+            Text(model.historyStatus).font(.caption).foregroundColor(.secondary)
+            if !model.recordingHistory {
+                Button(model.previousEpochAvailable ? "Continue same battery" : "Start recording battery") {
+                    model.confirmBattery(replacement: false)
+                }.disabled(model.unavailable)
+            }
+            if model.previousEpochAvailable {
+                Button("Register replacement battery") { confirmReplacement = true }
+                    .disabled(model.unavailable)
+                    .alert("Start a separate battery history?", isPresented: $confirmReplacement) {
+                        Button("Cancel", role: .cancel) {}
+                        Button("Confirm replacement") { model.confirmBattery(replacement: true) }
+                    } message: { Text("Only confirm if the physical battery was replaced. Previous history is preserved.") }
             }
         }
     }
