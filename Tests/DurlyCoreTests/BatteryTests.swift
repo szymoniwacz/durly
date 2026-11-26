@@ -159,15 +159,15 @@ final class BatteryTests: XCTestCase {
 
     func testTransactionRejectsUnsafeInputs() {
         let context = controlContext()
-        expectControlError(.permissionDenied) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(authorized: false)) }
-        expectControlError(.competingController) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(competitorAbsent: false)) }
-        expectControlError(.staleTelemetry) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(age: 16)) }
-        expectControlError(.staleTelemetry) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(age: -1)) }
-        expectControlError(.unsafeTelemetry) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(health: "Check Battery")) }
-        expectControlError(.unsafeTelemetry) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(ac: false)) }
-        expectControlError(.unsafeTelemetry) { try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(temperature: 4500)) }
-        expectControlError(.invalidLimit) { try ControlTransaction.prepare(limit: 49, live: 76, existing: nil, context: context) }
-        expectControlError(.unknownBaseline) { try ControlTransaction.prepare(limit: 80, live: 15, existing: nil, context: context) }
+        expectControlError(.permissionDenied) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(authorized: false)) }
+        expectControlError(.competingController) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(competitorAbsent: false)) }
+        expectControlError(.staleTelemetry) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(age: 16)) }
+        expectControlError(.staleTelemetry) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(age: -1)) }
+        expectControlError(.unsafeTelemetry) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(health: "Check Battery")) }
+        expectControlError(.unsafeTelemetry) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(ac: false)) }
+        expectControlError(.unsafeTelemetry) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(temperature: 4500)) }
+        expectControlError(.invalidLimit) { _ = try ControlTransaction.prepare(limit: 49, live: 76, existing: nil, context: context) }
+        expectControlError(.unknownBaseline) { _ = try ControlTransaction.prepare(limit: 80, live: 15, existing: nil, context: context) }
     }
 
     func testSimulatedControlAndPauseRestoreBaseline() {
