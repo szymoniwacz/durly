@@ -95,11 +95,13 @@ struct PopoverView: View {
                 Text(model.controlExplanation)
                     .font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            historyPanel
-            Toggle("Show diagnostics", isOn: Binding(get: { model.settings.showDetails },
-                                                    set: { model.update(showDetails: $0) }))
-            if model.settings.showDetails {
-                diagnostics
+            Group {
+                historyPanel
+                Toggle("Show diagnostics", isOn: Binding(get: { model.settings.showDetails },
+                                                        set: { model.update(showDetails: $0) }))
+                if model.settings.showDetails {
+                    diagnostics
+                }
             }
         }
     }
