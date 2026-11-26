@@ -1,7 +1,7 @@
 import Foundation
 import CoreFoundation
 
-public struct BatterySnapshot: Equatable {
+public struct BatterySnapshot: Equatable, Codable {
     public let capturedAt: Date
     public let percentage: Int?
     public let externalPower: Bool?
