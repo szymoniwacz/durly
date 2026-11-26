@@ -20,3 +20,8 @@
 .env
 .env.*
 !.env.example
+
+# SwiftPM and local app builds
+.build/
+.swiftpm/
+dist/
