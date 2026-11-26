@@ -12,4 +12,4 @@ Project-specific context is tracked in `.ai/` as an overlay and must not be over
 
 ## Durly repository
 
-Native macOS battery-care application. Read `docs/product-requirements.md`, `.ai/project/scope.md`, `.ai/project/decisions.md` and `.ai/docs/project-requirements.md` before changes. Use SwiftPM and Command Line Tools, no full Xcode, Codex or Cursor. CI must use Linux runners only; native compilation and device tests run locally. Never enable unverified hardware writes. Respect readiness and issue dependency gates.
+Native macOS battery-care application. Read `docs/product-requirements.md`, `.ai/project/scope.md`, `.ai/project/decisions.md` and `.ai/docs/project-requirements.md` before changes. Use direct swiftc via the local build/test scripts and SwiftPM/XCTest in Linux CI, no full Xcode, Codex or Cursor. CI must use Linux runners only; native compilation and device tests run locally. Never enable unverified hardware writes. Respect readiness and issue dependency gates.
