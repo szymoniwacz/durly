@@ -53,6 +53,34 @@ final class BatteryTests: XCTestCase {
         XCTAssertNil(monitor.snapshot)
     }
 
+    func testCapacityPairsNeverMixKeyFamilies() {
+        let complete = BatteryDecoder.decode(registry: [
+            "AppleRawCurrentCapacity": 3000, "AppleRawMaxCapacity": 4000,
+            "CurrentCapacity": 80, "MaxCapacity": 100
+        ], powerSource: [:])
+        XCTAssertEqual(complete.currentCapacity, 3000)
+        XCTAssertEqual(complete.maxCapacity, 4000)
+        XCTAssertEqual(complete.rawChargePercentage, 75)
+
+        let fallback = BatteryDecoder.decode(registry: [
+            "AppleRawCurrentCapacity": 3000, "CurrentCapacity": 80, "MaxCapacity": 100
+        ], powerSource: [:])
+        XCTAssertEqual(fallback.currentCapacity, 80)
+        XCTAssertEqual(fallback.maxCapacity, 100)
+
+        let partial = BatteryDecoder.decode(registry: [
+            "AppleRawMaxCapacity": 4000, "CurrentCapacity": 80
+        ], powerSource: [:])
+        XCTAssertNil(partial.currentCapacity)
+        XCTAssertEqual(partial.maxCapacity, 4000)
+        XCTAssertNil(partial.rawChargePercentage)
+
+        let invalid = BatteryDecoder.decode(registry: [
+            "AppleRawCurrentCapacity": 5000, "AppleRawMaxCapacity": 4000
+        ], powerSource: [:])
+        XCTAssertNil(invalid.rawChargePercentage)
+    }
+
     private final class MockProvider: BatteryProvider {
         let value: BatterySnapshot
         var shouldFail = false
