@@ -30,7 +30,7 @@ IOKit telemetry and user preferences are inputs; menu bar status, local settings
 
 ## Technical preferences and constraints
 
-Swift 5.7-compatible SwiftPM, SwiftUI/AppKit, IOKit, Command Line Tools, macOS 12 deployment target. No full Xcode, Codex or Cursor. Linux-only CI. Native compilation and hardware acceptance locally. Avoid unnecessary dependencies. The application stack profile is project-specific; reusable profiles are not assumed applicable. See decisions and README. Application build, run, test and packaging commands are recorded in README; macOS execution requires local validation.
+Swift 5.7-compatible direct swiftc builds and standalone tests locally, SwiftPM/XCTest in Linux CI, SwiftUI/AppKit, IOKit, Command Line Tools, macOS 12 deployment target. No full Xcode, Codex or Cursor. Linux-only CI. Native compilation and hardware acceptance locally. Avoid unnecessary dependencies. The application stack profile is project-specific; reusable profiles are not assumed applicable. See decisions and README. Application build, run, test and packaging commands are recorded in README; macOS execution requires local validation.
 
 ## Quality, security and privacy
 
@@ -69,11 +69,11 @@ See [scope](../project/scope.md) and [roadmap](../project/roadmap.md). Release g
 | Integrations and failure handling | decided | IOKit; conditional SMC; fail-safe fallback | #3, #6 |
 | Authentication and authorization | deferred | No app accounts; privileged helper choice requires device evidence; does not block read-only research | #3 before any privileged control |
 | Secrets, privacy, and sensitive data | decided | Offline; omit identifiers; private workflow not committed | spec §§6–7 |
-| Language, framework, and dependencies | decided | Swift 5.7, SwiftPM, SwiftUI/AppKit, IOKit, CLT | D-01 |
+| Language, framework, and dependencies | decided | Swift 5.7, local swiftc/CLT, Linux SwiftPM, SwiftUI/AppKit, IOKit | D-01 |
 | Environments and deployment | decided | Local Monterey build, Linux CI, local Release app | D-01, D-02 |
 | Configuration | decided | Local preferences, validated thresholds, opt-in control | #5, #7 |
 | Logging, monitoring, and errors | decided | Local visible errors and sanitized diagnostics | #8 |
-| Tests, lint, typecheck, performance | decided | Local Swift build/tests, portable Linux checks, measure footprint locally | #4, #9 |
+| Tests, lint, typecheck, performance | decided | Local build/test scripts, portable Linux checks, measure footprint locally | #4, #9 |
 | Scale, reliability, and cost | decided | Single local user, no server, minimal resource use | spec §8 |
 | Supported platforms and compatibility | decided | Intel MacBookPro11,5 / Monterey 12.7.6 first | D-01; #3 |
 | Accessibility and localization | decided | Native accessible controls and localization-ready strings; translations later | spec §5 |
@@ -90,7 +90,7 @@ See [scope](../project/scope.md) and [roadmap](../project/roadmap.md). Release g
 | All `deferred` items have reason and return trigger | recorded | See decision status |
 | Template customization complete | pass | Project-owned overlay, README and AGENTS customized; local doctor and leak check passed at c750a03 |
 | Stack profile selected or marked N/A | N/A | Project-specific stack guidance above |
-| Real project commands recorded | recorded | README; native execution pending local owner validation |
+| Real project commands recorded | recorded | README; native build and launch validated on target Intel Mac |
 | Root README describes the product | recorded | README |
 | `AGENTS.md` describes repository role | recorded | AGENTS.md |
 | Bootstrap markers removed | pass | Reviewed tracked project definition files; no bootstrap placeholders remain in changed project documents |
