@@ -194,7 +194,7 @@ final class PopoverModel: ObservableObject {
     }
 
     private func recordHistory() {
-        guard let history = history, let sample = snapshot, let epoch = capture.epoch else { return }
+        guard let history = history, let sample = snapshot, let epoch = capture.epoch, let session = recordingSession else { return }
         let uptime = ProcessInfo.processInfo.systemUptime
         if capture.clockRegressed(sample, uptime: uptime) {
             endRecording(.clockChange, status: "Confirm battery after clock change")
@@ -202,7 +202,7 @@ final class PopoverModel: ObservableObject {
         }
         guard capture.shouldCapture(sample, uptime: uptime, now: Date()) else { return }
         do {
-            try history.append(sample, epoch: epoch)
+            try history.append(sample, epoch: epoch, session: session)
             capture.recorded(sample, uptime: uptime)
             loadHistory()
             historyStatus = "Recording · last saved " + DateFormatter.localizedString(from: sample.capturedAt, dateStyle: .none, timeStyle: .medium)
@@ -264,7 +264,7 @@ final class PopoverModel: ObservableObject {
                         self.endRecording(.telemetryUnavailable, status: "Recording paused: diagnostic save failed")
                     }
                 } else {
-                    self.smcProbeReport = report + "\\nNot archived: no continuous confirmed recording session."
+                    self.smcProbeReport = report + "\nNot archived: no continuous confirmed recording session."
                 }
             }
         }
