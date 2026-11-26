@@ -15,16 +15,16 @@ final class BatteryTests: XCTestCase {
                 capturedAt: t.addingTimeInterval(offset))
         }
         let first = sample(0, true)
-        XCTAssertFalse(gate.shouldCapture(first, uptime: 100, now: t))
+        XCTAssertTrue(!gate.shouldCapture(first, uptime: 100, now: t))
         gate.select(UUID())
         XCTAssertTrue(gate.shouldCapture(first, uptime: 100, now: t))
         gate.recorded(first, uptime: 100)
-        XCTAssertFalse(gate.shouldCapture(sample(10, true), uptime: 110, now: t.addingTimeInterval(10)))
+        XCTAssertTrue(!gate.shouldCapture(sample(10, true), uptime: 110, now: t.addingTimeInterval(10)))
         XCTAssertTrue(gate.shouldCapture(sample(10, false), uptime: 110, now: t.addingTimeInterval(10)))
         XCTAssertTrue(gate.shouldCapture(sample(60, true), uptime: 160, now: t.addingTimeInterval(60)))
-        XCTAssertFalse(gate.shouldCapture(first, uptime: 161, now: t.addingTimeInterval(61)))
+        XCTAssertTrue(!gate.shouldCapture(first, uptime: 161, now: t.addingTimeInterval(61)))
         gate.suspend()
-        XCTAssertFalse(gate.shouldCapture(sample(60, true), uptime: 160, now: t.addingTimeInterval(60)))
+        XCTAssertTrue(!gate.shouldCapture(sample(60, true), uptime: 160, now: t.addingTimeInterval(60)))
     }
 
     func testHistoryPersistenceAndEpochSeparation() {
