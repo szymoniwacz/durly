@@ -44,8 +44,11 @@ final class PopoverModel: ObservableObject {
         return "Power state unavailable"
     }
 
+    var healthSeverity: BatteryHealthSeverity { BatteryHealthSeverity.classify(snapshot?.condition) }
+
     var healthWarning: String? {
-        guard let condition = snapshot?.condition, !condition.isEmpty else { return nil }
-        return ["good", "normal"].contains(condition.lowercased()) ? nil : condition
+        guard let condition = snapshot?.condition?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !condition.isEmpty else { return nil }
+        return BatteryHealthSeverity.classify(condition) == .normal ? nil : condition
     }
 }
