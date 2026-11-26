@@ -6,6 +6,33 @@ import XCTest
 import DurlyCore
 
 final class BatteryTests: XCTestCase {
+    func testHistoryEventsPersistAndRemainSeparated() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            let store = try BatteryHistory(url: url)
+            let date = Date(timeIntervalSince1970: 1000.125)
+            let old = try store.createEpoch(at: date)
+            let new = try store.createEpoch(at: date.addingTimeInterval(100))
+            let session = UUID()
+            try store.appendEvent(epoch: old, at: date, kind: .recordingStarted, session: session)
+            try store.appendEvent(epoch: old, at: date.addingTimeInterval(1), kind: .manualSMC, detail: "BCLM: 76", session: session)
+            try store.appendEvent(epoch: old, at: date.addingTimeInterval(2), kind: .sleep, session: session)
+            let reopened = try BatteryHistory(url: url)
+            let events = try reopened.events(epoch: old)
+            let newEvents = try reopened.events(epoch: new)
+            XCTAssertEqual(events.map { $0.kind }, [.sleep, .manualSMC, .recordingStarted])
+            XCTAssertEqual(events.map { $0.session }, [session, session, session])
+            XCTAssertEqual(events.last?.capturedAt, date)
+            XCTAssertEqual(events[1].detail, "BCLM: 76")
+            XCTAssertTrue(newEvents.isEmpty)
+            do {
+                try reopened.appendEvent(epoch: UUID(), at: date, kind: .sleep)
+                XCTAssertTrue(false)
+            } catch {}
+        } catch { XCTAssertTrue(false) }
+    }
+
     func testHistoryCaptureRequiresConfirmationAndBoundsSampling() {
         var gate = HistoryCapture()
         let t = Date(timeIntervalSince1970: 1000)
