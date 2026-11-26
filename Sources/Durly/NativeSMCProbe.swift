@@ -42,7 +42,7 @@ enum NativeSMCProbe {
             guard let matching = IOServiceMatching("AppleSMC") else {
                 throw SMCReadError.serviceUnavailable
             }
-            let service = IOServiceGetMatchingService(kIOMasterPortDefault, matching)
+            let service = IOServiceGetMatchingService(kIOMainPortDefault, matching)
             guard service != 0 else { throw SMCReadError.serviceUnavailable }
             defer { IOObjectRelease(service) }
             let opened = IOServiceOpen(service, mach_task_self_, 0, &connection)
