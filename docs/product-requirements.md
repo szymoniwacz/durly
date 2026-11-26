@@ -67,8 +67,8 @@ An unsupported control must be hidden or clearly disabled with an explanation; r
 ### First-run experience
 1. Detect Mac model, macOS version, battery telemetry, available control features and limitations.
 2. Explain the objective: **long-term battery health**, not maximum hours per charge.
-3. Offer **Smart Battery Care** as the sensible default and manual mode for advanced users.
-4. Ask permission for privileged actions only when actually needed, and explain why.
+3. Start in monitoring mode, explain history and battery identity; later offer Smart Battery Care and manual mode only after validation.
+4. In v0.1.0 ask only for optional notification permissions; future privileged actions require separate approval.
 5. Never silently write unsupported SMC keys or begin a discharge cycle.
 6. Offer a read-only mode if control cannot be safely established.
 
@@ -101,9 +101,9 @@ Priority key: **P0** = MVP/core; **P1** = planned; **P2** = exploratory or hardw
 - Model future battery demand conservatively rather than claiming to predict travel.
 
 ### 4.4 Temperature protection — P0 monitoring/alerts; control deferred
-- Monitor relevant battery temperature where available; otherwise state that temperature protection is unavailable.
-- Suspend or limit charging where verified safe when a configured safety threshold is crossed.
-- Restore regular policy with hysteresis after cooling.
+- Monitor relevant battery temperature where available; otherwise state that temperature monitoring is unavailable.
+- In v0.1.0 warn on persistent unfavorable temperature; future charge suspension requires verified safe control.
+- Resolve advisory alerts after cooling with hysteresis; future charge-policy restoration is deferred.
 - Avoid claiming the app can physically cool a battery or override Apple's internal protection.
 - Never rely on Durly as a replacement for hardware safeguards.
 
