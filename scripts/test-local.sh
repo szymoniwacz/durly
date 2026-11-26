@@ -20,7 +20,7 @@ fi
 {
   printf '%s\n' '@main' 'struct GeneratedRunner {' '  static func main() {' '    let tests = BatteryTests()'
   while IFS= read -r method; do printf '    tests.%s()\n' "$method"; done <<< "$methods"
-  printf '    print("PASS: %s battery telemetry tests")\n' "$count"
+  printf '    print("PASS: %s Durly core tests")\n' "$count"
   printf '%s\n' '  }' '}'
 } > "$runner"
 swiftc -D MANUAL_TESTS -parse-as-library -I "$build" \
