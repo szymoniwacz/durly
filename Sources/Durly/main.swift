@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.setAccessibilityLabel("Durly, \(percentage.map { "\($0) percent" } ?? "battery data unavailable"), \(model.chargeState)")
         }
         scheduleExpiry()
-        let interval = min(model.settings.refreshSeconds, 60)
+        let interval = min(model.settings.refreshSeconds, 5)
         if activeInterval != interval {
             timer?.invalidate()
             let next = Timer(timeInterval: Double(interval), target: self, selector: #selector(poll),
