@@ -6,6 +6,7 @@ struct PopoverView: View {
     let maximumHeight: CGFloat
     let quit: () -> Void
     @State private var showSettings = false
+    @State private var contentHeight: CGFloat = 1
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -22,14 +23,21 @@ struct PopoverView: View {
                 }.help("Settings").accessibilityLabel("Settings")
             }
             ScrollView {
-                if showSettings {
-                    settingsPanel
-                } else {
-                    overview
+                Group {
+                    if showSettings {
+                        settingsPanel
+                    } else {
+                        overview
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: ContentHeightKey.self, value: geometry.size.height)
+                })
             }
-            .frame(maxHeight: maximumHeight - 100)
-            .fixedSize(horizontal: false, vertical: true)
+            .frame(height: min(max(1, contentHeight), maximumHeight - 100))
+            .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
             Divider()
             HStack {
                 Text("Local battery monitoring").font(.caption).foregroundColor(.secondary)
@@ -158,5 +166,12 @@ struct PopoverView: View {
 
     private func yesNo(_ value: Bool?) -> String {
         value.map { $0 ? "Yes" : "No" } ?? "Unavailable"
+    }
+}
+
+private struct ContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 1
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
