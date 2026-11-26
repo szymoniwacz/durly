@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 #if !MANUAL_TESTS
 import XCTest
 #endif
@@ -143,6 +144,445 @@ final class BatteryTests: XCTestCase {
         XCTAssertEqual(BatteryPresentation.fresh(snapshot, settings: DisplaySettings(refreshSeconds: 30), at: later), snapshot)
         XCTAssertNil(BatteryPresentation.fresh(snapshot, settings: DisplaySettings(), at: now.addingTimeInterval(-1)))
         XCTAssertNil(BatteryPresentation.fresh(nil, settings: DisplaySettings(), at: now))
+    }
+
+    func testPowerControlAlwaysReadOnly() {
+        let target = ControlCapabilityDetector.detect(model: "MacBookPro11,5", os: "12.7.6", architecture: "x86_64")
+        XCTAssertEqual(target.reason, .unverifiedBackend)
+        XCTAssertEqual(target.canWrite, false)
+        XCTAssertEqual(ControlCapabilityDetector.detect(model: "other", os: "12.7.6", architecture: "x86_64").reason, .unsupportedDevice)
+        XCTAssertEqual(ControlCapabilityDetector.detect(model: "MacBookPro11,5", os: "12.7.5", architecture: "x86_64").canWrite, false)
+        XCTAssertEqual(ControlCapabilityDetector.detect(model: "MacBookPro11,5", os: "12.7.6", architecture: "arm64").canWrite, false)
+        let backend = ReadOnlyBackend()
+        expectControlError(.unverifiedBackend) { try backend.apply(limit: 80, snapshot: nil, at: Date()) }
+        expectControlError(.unverifiedBackend) { try backend.pause(snapshot: nil, at: Date()) }
+    }
+
+    func testTransactionRejectsUnsafeInputs() {
+        let context = controlContext()
+        expectControlError(.permissionDenied) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(authorized: false), transactionID: UUID(), at: Date(timeIntervalSince1970: 1000)) }
+        expectControlError(.competingController) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(competitorAbsent: false), transactionID: UUID(), at: Date(timeIntervalSince1970: 1000)) }
+        expectControlError(.staleTelemetry) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(age: 16), transactionID: UUID(), at: Date(timeIntervalSince1970: 1000)) }
+        expectControlError(.staleTelemetry) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(age: -1), transactionID: UUID(), at: Date(timeIntervalSince1970: 1000)) }
+        expectControlError(.unsafeTelemetry) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(health: "Check Battery"), transactionID: UUID(), at: Date(timeIntervalSince1970: 1000)) }
+        expectControlError(.unsafeTelemetry) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(ac: false), transactionID: UUID(), at: Date(timeIntervalSince1970: 1000)) }
+        expectControlError(.unsafeTelemetry) { _ = try ControlTransaction.prepare(limit: 80, live: 76, existing: nil, context: self.controlContext(temperature: 4500), transactionID: UUID(), at: Date(timeIntervalSince1970: 1000)) }
+        expectControlError(.invalidLimit) { _ = try ControlTransaction.prepare(limit: 49, live: 76, existing: nil, context: context, transactionID: UUID(), at: Date(timeIntervalSince1970: 1000)) }
+        expectControlError(.unknownBaseline) { _ = try ControlTransaction.prepare(limit: 80, live: 15, existing: nil, context: context, transactionID: UUID(), at: Date(timeIntervalSince1970: 1000)) }
+    }
+
+    func testSimulatedControlAndPauseRestoreBaseline() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        do {
+            try coordinator.apply(limit: 82, context: controlContext())
+            XCTAssertEqual(transport.value, 82)
+            assertRecord(journal.record, phase: .applied)
+            try coordinator.pause(context: controlContext())
+            XCTAssertEqual(transport.value, 76)
+            XCTAssertNil(journal.record)
+            XCTAssertEqual(transport.writes, [82, 76])
+        } catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+    }
+
+    func testSimulatedControlFailureRetainsRecoveryRecord() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        transport.failWrite = true
+        expectControlError(.writeFailed) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+        assertRecord(journal.record, phase: .prepared)
+        transport.failWrite = false
+        expectControlError(.recoveryRequired) { try coordinator.apply(limit: 80, context: self.controlContext()) }
+        expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82])
+    }
+
+    func testSimulatedDriftAndReadbackMismatch() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        transport.ignoreWrite = true
+        expectControlError(.readbackMismatch) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+        assertRecord(journal.record, phase: .prepared)
+        let restarted = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        expectControlError(.recoveryRequired) { try restarted.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82])
+    }
+
+    func testSimulatedJournalFailurePreventsWrite() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        journal.failSave = true
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        expectControlError(.journalFailed) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [])
+    }
+
+    func testRestartCannotRestoreUncertainOrPreviouslyAppliedTransaction() {
+        for uncertain in [true, false] {
+            let transport = TestTransport()
+            let journal = TestJournal()
+            let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+            transport.failAfterWrite = uncertain
+            if uncertain {
+                expectControlError(.writeFailed) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+            } else {
+                do { try coordinator.apply(limit: 82, context: controlContext()) }
+                catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+            }
+            XCTAssertEqual(transport.value, 82)
+            XCTAssertEqual(journal.record?.phase, uncertain ? .prepared : .applied)
+            transport.failAfterWrite = false
+            let restarted = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+            expectControlError(.recoveryRequired) { try restarted.pause(context: self.controlContext()) }
+            expectControlError(.recoveryRequired) { try restarted.apply(limit: 80, context: self.controlContext()) }
+            XCTAssertEqual(transport.writes, [82])
+        }
+    }
+
+    func testJournalLoadFailureLatchesApplyAndPause() {
+        for pause in [true, false] {
+            let transport = TestTransport()
+            let journal = TestJournal()
+            let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+            journal.failLoad = true
+            if pause {
+                expectControlError(.journalFailed) { try coordinator.pause(context: self.controlContext()) }
+            } else {
+                expectControlError(.journalFailed) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+            }
+            journal.failLoad = false
+            expectControlError(.recoveryRequired) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+            expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+            XCTAssertEqual(transport.writes, [])
+        }
+    }
+
+    func testFailedRollbackRetainsRestoringPhase() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        do { try coordinator.apply(limit: 82, context: controlContext()) }
+        catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        transport.failWrite = true
+        expectControlError(.writeFailed) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(journal.record?.phase, .restoring)
+        transport.failWrite = false
+        let restarted = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        expectControlError(.recoveryRequired) { try restarted.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82, 76])
+    }
+
+    func testFailedJournalClearDoesNotRepeatRollback() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        do { try coordinator.apply(limit: 82, context: controlContext()) }
+        catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        journal.failClear = true
+        expectControlError(.journalFailed) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.value, 76)
+        XCTAssertEqual(journal.record?.phase, .restoring)
+        journal.failClear = false
+        expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82, 76])
+    }
+
+    func testConcurrentCoordinatorsCannotReplaceBaseline() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let first = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        let second = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        let context = controlContext()
+        let outcomes = ConcurrentOutcomes()
+        DispatchQueue.concurrentPerform(iterations: 32) { index in
+            let coordinator = index % 2 == 0 ? first : second
+            outcomes.record { try coordinator.apply(limit: 82, context: context) }
+        }
+        XCTAssertEqual(outcomes.values.sorted(), (Array(repeating: "recoveryRequired", count: 31) + ["success"]).sorted())
+        XCTAssertEqual(transport.writes, [82])
+        assertRecord(journal.record, phase: .applied)
+    }
+
+    func testReplacementRecordWithSameValuesCannotAuthorizeRestore() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        do { try coordinator.apply(limit: 82, context: controlContext()) }
+        catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        let original = journal.record
+        let replacement = RecoveryRecord(baseline: 76, expected: 82, phase: .applied)
+        XCTAssertTrue(original?.transactionID != replacement.transactionID)
+        journal.record = replacement
+        expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(journal.record, replacement)
+        XCTAssertEqual(transport.writes, [82])
+    }
+
+    func testTransactionIdentitySurvivesPhaseTransitions() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        do {
+            try coordinator.apply(limit: 82, context: controlContext())
+            try coordinator.pause(context: controlContext())
+        } catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        XCTAssertEqual(journal.saved.map { $0.phase }, [.prepared, .applied, .restoring])
+        XCTAssertEqual(Set(journal.saved.map { $0.transactionID }).count, 1)
+        XCTAssertNil(journal.record)
+    }
+
+    func testTelemetryExpiresBeforeApplyOrRestoreWrite() {
+        for pause in [false, true] {
+            let transport = TestTransport()
+            let journal = TestJournal()
+            var now = Date(timeIntervalSince1970: 1000)
+            let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { now })
+            if pause {
+                do { try coordinator.apply(limit: 82, context: controlContext()) }
+                catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+            }
+            journal.onSave = { now = Date(timeIntervalSince1970: 1016) }
+            if pause {
+                expectControlError(.staleTelemetry) { try coordinator.pause(context: self.controlContext()) }
+            } else {
+                expectControlError(.staleTelemetry) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+            }
+            XCTAssertEqual(transport.writes, pause ? [82] : [])
+            XCTAssertEqual(journal.record?.phase, pause ? .restoring : .prepared)
+            now = Date(timeIntervalSince1970: 1000)
+            expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+        }
+    }
+
+    func testUnexpectedJournalStateLatchesEvenAfterRecordDisappears() {
+        for missing in [false, true] {
+            let transport = TestTransport()
+            let journal = TestJournal()
+            let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+            if missing {
+                do { try coordinator.apply(limit: 82, context: controlContext()) }
+                catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+            } else {
+                journal.record = RecoveryRecord(baseline: 76, expected: 82, phase: .applied)
+            }
+            let original = journal.record
+            if missing { journal.record = nil }
+            expectControlError(.recoveryRequired) { try coordinator.apply(limit: 80, context: self.controlContext()) }
+            journal.record = missing ? original : nil
+            expectControlError(.recoveryRequired) { try coordinator.apply(limit: 80, context: self.controlContext()) }
+            expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+            XCTAssertEqual(transport.writes, missing ? [82] : [])
+        }
+    }
+
+    func testConcurrentApplyAndPausePreserveOwnerAndBaseline() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let context = controlContext()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        do { try coordinator.apply(limit: 82, context: context) }
+        catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        let outcomes = ConcurrentOutcomes()
+        DispatchQueue.concurrentPerform(iterations: 2) { index in
+            outcomes.record {
+                if index == 0 { try coordinator.apply(limit: 80, context: context) }
+                else { try coordinator.pause(context: context) }
+            }
+        }
+        // Either legal serialization is accepted, but no partial interleaving.
+        if outcomes.values.contains("recoveryRequired") {
+            XCTAssertEqual(outcomes.values.sorted(), ["recoveryRequired", "success"])
+            XCTAssertEqual(transport.writes, [82, 76])
+            XCTAssertNil(journal.record)
+        } else {
+            XCTAssertEqual(outcomes.values.sorted(), ["success", "success"])
+            XCTAssertEqual(transport.writes, [82, 76, 80])
+            XCTAssertEqual(journal.record?.baseline, 76)
+            XCTAssertEqual(journal.record?.expected, 80)
+            XCTAssertEqual(journal.record?.phase, .applied)
+        }
+    }
+
+    func testAuthoritativeClockValidatesSnapshotAtActualOperationTime() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        var now = Date(timeIntervalSince1970: 1000)
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { now })
+        // The snapshot is one second ahead of the original fixture time,
+        // but is valid when the coordinator actually handles the operation.
+        let context = controlContext(age: -1)
+        now = Date(timeIntervalSince1970: 1001)
+        do {
+            try coordinator.apply(limit: 82, context: context)
+            try coordinator.pause(context: context)
+        } catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        XCTAssertEqual(transport.writes, [82, 76])
+        XCTAssertNil(journal.record)
+    }
+
+    func testExternalDriftImmediatelyBeforeApplyPreventsWrite() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        journal.onSave = { transport.value = 79 }
+        expectControlError(.recoveryRequired) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [])
+        XCTAssertEqual(transport.value, 79)
+        assertRecord(journal.record, phase: .prepared)
+        journal.onSave = nil
+        expectControlError(.recoveryRequired) { try coordinator.apply(limit: 80, context: self.controlContext()) }
+    }
+
+    func testExternalDriftImmediatelyBeforeRestorePreventsWrite() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        do { try coordinator.apply(limit: 82, context: controlContext()) }
+        catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        journal.onSave = { transport.value = 79 }
+        expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82])
+        XCTAssertEqual(transport.value, 79)
+        assertRecord(journal.record, phase: .restoring)
+        journal.onSave = nil
+        expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+    }
+
+    func testFailureSavingAppliedPhaseRetainsPreparedRecordAndBlocksRecovery() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        journal.failPhase = .applied
+        expectControlError(.journalFailed) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82])
+        XCTAssertEqual(transport.value, 82)
+        assertRecord(journal.record, phase: .prepared)
+        journal.failPhase = nil
+        expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+        let restarted = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        expectControlError(.recoveryRequired) { try restarted.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82])
+    }
+
+    func testFailureSavingRestoringPhasePreventsRollbackWrite() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        do { try coordinator.apply(limit: 82, context: controlContext()) }
+        catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        journal.failPhase = .restoring
+        expectControlError(.journalFailed) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82])
+        XCTAssertEqual(transport.value, 82)
+        assertRecord(journal.record, phase: .applied)
+        journal.failPhase = nil
+        expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+        let restarted = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        expectControlError(.recoveryRequired) { try restarted.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82])
+    }
+
+    func testRollbackReadbackMismatchRetainsRecoveryRecord() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        do { try coordinator.apply(limit: 82, context: controlContext()) }
+        catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        transport.ignoreWrite = true
+        expectControlError(.readbackMismatch) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82, 76])
+        XCTAssertEqual(transport.value, 82)
+        assertRecord(journal.record, phase: .restoring)
+        transport.ignoreWrite = false
+        expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+        let restarted = SimulatedTransactionCoordinator(transport: transport, journal: journal, clock: { Date(timeIntervalSince1970: 1000) })
+        expectControlError(.recoveryRequired) { try restarted.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82, 76])
+    }
+
+    private func assertRecord(_ record: RecoveryRecord?, phase: RecoveryPhase) {
+        XCTAssertEqual(record?.baseline, 76)
+        XCTAssertEqual(record?.expected, 82)
+        XCTAssertEqual(record?.phase, phase)
+    }
+
+    private final class ConcurrentOutcomes {
+        private let lock = NSLock()
+        private var storage: [String] = []
+        var values: [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage
+        }
+        func record(_ operation: () throws -> Void) {
+            let outcome: String
+            do { try operation(); outcome = "success" }
+            catch let error as ControlBlock { outcome = error.rawValue }
+            catch { outcome = "unexpected: " + String(describing: error) }
+            lock.lock()
+            storage.append(outcome)
+            lock.unlock()
+        }
+    }
+
+    private func controlContext(authorized: Bool = true, competitorAbsent: Bool = true, age: TimeInterval = 0,
+                                health: String = "Normal", ac: Bool = true, temperature: Int = 3000) -> ControlContext {
+        let now = Date(timeIntervalSince1970: 1000)
+        let sample = BatteryDecoder.decode(registry: ["ExternalConnected": ac, "IsCharging": false,
+            "Temperature": temperature, "BatteryHealth": health], powerSource: ["Current Capacity": 79, "Max Capacity": 100],
+            capturedAt: now.addingTimeInterval(-age))
+        return ControlContext(authorized: authorized, competitorAbsent: competitorAbsent, snapshot: sample)
+    }
+
+    private func expectControlError(_ expected: ControlBlock, _ operation: () throws -> Void) {
+        do {
+            try operation()
+            XCTAssertEqual("no error", expected.rawValue)
+        } catch {
+            XCTAssertEqual(error as? ControlBlock, expected)
+        }
+    }
+
+    private final class TestTransport: LimitTransport {
+        var value = 76
+        var writes: [Int] = []
+        var failWrite = false
+        var ignoreWrite = false
+        var failAfterWrite = false
+        func read() throws -> Int { value }
+        func write(_ value: Int) throws {
+            writes.append(value)
+            if failWrite { throw ControlBlock.writeFailed }
+            if !ignoreWrite { self.value = value }
+            if failAfterWrite { throw ControlBlock.writeFailed }
+        }
+    }
+
+    private final class TestJournal: RecoveryJournal {
+        var record: RecoveryRecord?
+        var failSave = false
+        var failPhase: RecoveryPhase?
+        var failLoad = false
+        var failClear = false
+        var saved: [RecoveryRecord] = []
+        var onSave: (() -> Void)?
+        func load() throws -> RecoveryRecord? {
+            if failLoad { throw ControlBlock.journalFailed }
+            return record
+        }
+        func save(_ record: RecoveryRecord) throws {
+            if failSave || failPhase == record.phase { throw ControlBlock.journalFailed }
+            self.record = record
+            saved.append(record)
+            onSave?()
+        }
+        func clear() throws {
+            if failClear { throw ControlBlock.journalFailed }
+            record = nil
+        }
     }
 
     private final class MockProvider: BatteryProvider {
