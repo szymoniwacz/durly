@@ -130,9 +130,9 @@ struct PopoverView: View {
             metric("Voltage", number(model.snapshot?.voltageMillivolts, " mV"))
             if model.canProbeSMC {
                 Button(model.smcProbeRunning ? "Reading SMC…" : "Read SMC charge keys", action: model.probeSMC)
-                    .disabled(model.smcProbeRunning)
+                    .disabled(model.smcProbeRunning || model.smcProbeBlocked)
                 if let report = model.smcProbeReport {
-                    Text("Last manual read (raw bytes)").foregroundColor(.secondary)
+                    Text("Last manual probe (raw bytes)").foregroundColor(.secondary)
                     Text(report).monospacedDigit().textSelection(.enabled)
                 }
             }
