@@ -22,6 +22,8 @@ final class PopoverModel: ObservableObject {
     @Published private(set) var historyStatus = "History not initialized"
     @Published private(set) var previousEpochAvailable = false
     @Published private(set) var recordingHistory = false
+    @Published private(set) var recentHistory: [BatterySnapshot] = []
+    @Published private(set) var historyReadError = false
     private var history: BatteryHistory?
     private var capture = HistoryCapture()
     private var previousEpoch: UUID?
@@ -50,6 +52,26 @@ final class PopoverModel: ObservableObject {
         } catch { history = nil; historyStatus = "History unavailable: storage initialization failed" }
     }
 
+    func stopRecording() {
+        capture.suspend()
+        recordingHistory = false
+        historyStatus = "Recording stopped"
+    }
+
+    func loadHistory() {
+        guard let history = history, let epoch = previousEpoch else {
+            recentHistory = []
+            return
+        }
+        do {
+            recentHistory = try history.samples(epoch: epoch, limit: 20)
+            historyReadError = false
+        } catch {
+            recentHistory = []
+            historyReadError = true
+        }
+    }
+
     func confirmBattery(replacement: Bool) {
         monitor.refresh()
         snapshot = BatteryPresentation.fresh(monitor.snapshot, settings: settings)
@@ -73,6 +95,7 @@ final class PopoverModel: ObservableObject {
             capture.select(id)
             recordingHistory = true
             recordHistory()
+            loadHistory()
         } catch {
             capture.suspend()
             historyStatus = "History unavailable: battery selection failed"
@@ -91,6 +114,7 @@ final class PopoverModel: ObservableObject {
         do {
             try history.append(sample, epoch: epoch)
             capture.recorded(sample, uptime: uptime)
+            loadHistory()
             historyStatus = "Recording · last saved " + DateFormatter.localizedString(from: sample.capturedAt, dateStyle: .none, timeStyle: .medium)
         } catch {
             capture.suspend()
