@@ -70,12 +70,20 @@ public struct ControlContext: Equatable {
     }
 }
 
+public enum RecoveryPhase: Equatable { case prepared, applied, restoring }
+
 public struct RecoveryRecord: Equatable {
     public let baseline: Int
     public let expected: Int
-    public init(baseline: Int, expected: Int) {
+    public let phase: RecoveryPhase
+    public init(baseline: Int, expected: Int, phase: RecoveryPhase = .prepared) {
         self.baseline = baseline
         self.expected = expected
+        self.phase = phase
+    }
+
+    fileprivate func withPhase(_ phase: RecoveryPhase) -> RecoveryRecord {
+        RecoveryRecord(baseline: baseline, expected: expected, phase: phase)
     }
 }
 
@@ -96,14 +104,16 @@ public enum ControlTransaction {
     public static func restore(record: RecoveryRecord, live: Int,
                                context: ControlContext) throws -> Int {
         try context.validate()
-        guard (50...100).contains(record.baseline), (50...100).contains(record.expected),
+        guard record.phase == .applied,
+              (50...100).contains(record.baseline), (50...100).contains(record.expected),
               live == record.expected else { throw ControlBlock.recoveryRequired }
         return record.baseline
     }
 }
 
-// Internal simulation boundary. Not exposed as a production PowerControl backend.
-// All calls must be serialized by the future helper. No hardware implementation exists.
+// Simulation only. No production hardware implementation exists.
+// Journal adapters must atomically replace records or throw; durability and
+// cross-process exclusion are separate requirements for the future helper.
 public protocol LimitTransport {
     func read() throws -> Int
     func write(_ value: Int) throws
@@ -115,27 +125,46 @@ public protocol RecoveryJournal {
 }
 
 public final class SimulatedTransactionCoordinator {
+    // One lock across all simulated coordinators in this process.
+    private static let transactionLock = NSLock()
     private let transport: LimitTransport
     private let journal: RecoveryJournal
     private var latched = false
+    private var ownedRecord: RecoveryRecord?
+
     public init(transport: LimitTransport, journal: RecoveryJournal) {
         self.transport = transport
         self.journal = journal
     }
 
-    public func apply(limit: Int, context: ControlContext) throws {
-        guard !latched else { throw ControlBlock.recoveryRequired }
-        try context.validate()
-        let existing = try journal.load()
-        let live = try transport.read()
-        let record = try ControlTransaction.prepare(limit: limit, live: live, existing: existing, context: context)
-        // Keep evidence on every uncertain outcome, including failed write.
+    private func loadRecord() throws -> RecoveryRecord? {
+        do { return try journal.load() }
+        catch { latched = true; throw ControlBlock.journalFailed }
+    }
+
+    private func saveRecord(_ record: RecoveryRecord) throws {
         do { try journal.save(record) }
         catch { latched = true; throw ControlBlock.journalFailed }
+    }
+
+    public func apply(limit: Int, context: ControlContext) throws {
+        Self.transactionLock.lock()
+        defer { Self.transactionLock.unlock() }
+        guard !latched else { throw ControlBlock.recoveryRequired }
+        try context.validate()
+        guard try loadRecord() == nil, ownedRecord == nil else {
+            throw ControlBlock.recoveryRequired
+        }
+        let live = try transport.read()
+        let record = try ControlTransaction.prepare(limit: limit, live: live, existing: nil, context: context)
+        try saveRecord(record)
         do {
             guard try transport.read() == record.baseline else { throw ControlBlock.recoveryRequired }
             try transport.write(record.expected)
             try ControlTransaction.verify(record: record, readback: transport.read())
+            let applied = record.withPhase(.applied)
+            try saveRecord(applied)
+            ownedRecord = applied
         } catch {
             latched = true
             throw error
@@ -143,14 +172,33 @@ public final class SimulatedTransactionCoordinator {
     }
 
     public func pause(context: ControlContext) throws {
+        Self.transactionLock.lock()
+        defer { Self.transactionLock.unlock() }
         guard !latched else { throw ControlBlock.recoveryRequired }
         try context.validate()
-        guard let record = try journal.load() else { return }
+        let loaded = try loadRecord()
+        guard let record = loaded else {
+            guard ownedRecord == nil else {
+                latched = true
+                throw ControlBlock.recoveryRequired
+            }
+            return
+        }
+        // A reconstructed coordinator cannot prove ownership, even if the
+        // journal says applied and the live value matches. No implicit recovery.
+        guard record == ownedRecord, record.phase == .applied else {
+            latched = true
+            throw ControlBlock.recoveryRequired
+        }
         do {
             let baseline = try ControlTransaction.restore(record: record, live: transport.read(), context: context)
+            try saveRecord(record.withPhase(.restoring))
+            guard try transport.read() == record.expected else { throw ControlBlock.recoveryRequired }
             try transport.write(baseline)
             guard try transport.read() == baseline else { throw ControlBlock.readbackMismatch }
-            try journal.clear()
+            do { try journal.clear() }
+            catch { throw ControlBlock.journalFailed }
+            ownedRecord = nil
         } catch {
             latched = true
             throw error
