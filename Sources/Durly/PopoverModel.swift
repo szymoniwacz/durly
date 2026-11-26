@@ -1,12 +1,17 @@
 import Foundation
 import Darwin
 import Combine
+import Dispatch
 import DurlyCore
 
 final class PopoverModel: ObservableObject {
     @Published private(set) var snapshot: BatterySnapshot?
     @Published private(set) var settings: DisplaySettings
     var unavailable: Bool { snapshot == nil }
+
+    @Published private(set) var smcProbeRunning = false
+    @Published private(set) var smcProbeReport: String?
+    var canProbeSMC: Bool { powerControl.capability.reason == .unverifiedBackend }
 
     private let powerControl: PowerControl
     var controlExplanation: String {
@@ -43,6 +48,33 @@ final class PopoverModel: ObservableObject {
         self.monitor = BatteryMonitor(provider: provider)
         self.store = store
         self.settings = store.load()
+    }
+
+    // Explicit, one-shot diagnostic only; never poll the private driver.
+    func probeSMC() {
+        guard canProbeSMC, !smcProbeRunning else { return }
+        smcProbeRunning = true
+        smcProbeReport = nil
+        let capability = powerControl.capability
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let report: String
+            do {
+                let values = try NativeSMCProbe.read(capability: capability)
+                report = SMCChargeKey.allCases.map { key in
+                    switch values[key] {
+                    case .success(let value)?: return "\(key.rawValue): \(value)"
+                    case .failure(let error)?: return "\(key.rawValue): \(error)"
+                    case nil: return "\(key.rawValue): unavailable"
+                    }
+                }.joined(separator: "\n")
+            } catch {
+                report = "SMC unavailable: \(error)"
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.smcProbeReport = report
+                self?.smcProbeRunning = false
+            }
+        }
     }
 
     func refresh() {
