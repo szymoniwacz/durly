@@ -101,3 +101,59 @@ public enum ControlTransaction {
         return record.baseline
     }
 }
+
+// Internal simulation boundary. Not exposed as a production PowerControl backend.
+// All calls must be serialized by the future helper. No hardware implementation exists.
+public protocol LimitTransport {
+    func read() throws -> Int
+    func write(_ value: Int) throws
+}
+public protocol RecoveryJournal {
+    func load() throws -> RecoveryRecord?
+    func save(_ record: RecoveryRecord) throws
+    func clear() throws
+}
+
+public final class SimulatedTransactionCoordinator {
+    private let transport: LimitTransport
+    private let journal: RecoveryJournal
+    private var latched = false
+    public init(transport: LimitTransport, journal: RecoveryJournal) {
+        self.transport = transport
+        self.journal = journal
+    }
+
+    public func apply(limit: Int, context: ControlContext) throws {
+        guard !latched else { throw ControlBlock.recoveryRequired }
+        try context.validate()
+        let existing = try journal.load()
+        let live = try transport.read()
+        let record = try ControlTransaction.prepare(limit: limit, live: live, existing: existing, context: context)
+        // Keep evidence on every uncertain outcome, including failed write.
+        do { try journal.save(record) }
+        catch { latched = true; throw ControlBlock.journalFailed }
+        do {
+            guard try transport.read() == record.baseline else { throw ControlBlock.recoveryRequired }
+            try transport.write(record.expected)
+            try ControlTransaction.verify(record: record, readback: transport.read())
+        } catch {
+            latched = true
+            throw error
+        }
+    }
+
+    public func pause(context: ControlContext) throws {
+        guard !latched else { throw ControlBlock.recoveryRequired }
+        try context.validate()
+        guard let record = try journal.load() else { return }
+        do {
+            let baseline = try ControlTransaction.restore(record: record, live: transport.read(), context: context)
+            try transport.write(baseline)
+            guard try transport.read() == baseline else { throw ControlBlock.readbackMismatch }
+            try journal.clear()
+        } catch {
+            latched = true
+            throw error
+        }
+    }
+}
