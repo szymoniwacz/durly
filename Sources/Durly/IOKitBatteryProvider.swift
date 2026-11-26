@@ -21,7 +21,7 @@ struct IOKitBatteryProvider: BatteryProvider {
         guard let powerSource = powerSource else { throw BatteryReadError.unavailable }
 
         var registry: [String: Any] = [:]
-        let service = IOServiceGetMatchingService(kIOMasterPortDefault,
+        let service = IOServiceGetMatchingService(kIOMainPortDefault,
                                                   IOServiceMatching("AppleSmartBattery"))
         if service != IO_OBJECT_NULL {
             defer { IOObjectRelease(service) }
