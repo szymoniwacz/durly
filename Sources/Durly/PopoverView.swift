@@ -153,17 +153,27 @@ struct PopoverView: View {
                 Text("No recorded samples yet.").foregroundColor(.secondary)
             } else {
                 ForEach(model.recentHistory, id: \.capturedAt) { sample in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(sample.capturedAt, style: .date).font(.caption)
-                        Text(sample.capturedAt, style: .time).font(.caption)
-                        metric("Charge", number(sample.percentage, "%"))
-                        metric("Full-charge capacity", number(sample.maxCapacity, " mAh"))
-                        metric("Temperature", decimal(sample.temperatureCelsius, " °C"))
-                        metric("Current", number(sample.currentMilliamps, " mA"))
-                        metric("Cycles", number(sample.cycles))
-                        metric("AC / Charging", yesNo(sample.externalPower) + " / " + yesNo(sample.isCharging))
-                        Divider()
+                    DisclosureGroup {
+                        VStack(alignment: .leading, spacing: 4) {
+                            metric("Full-charge capacity", number(sample.maxCapacity, " mAh"))
+                            metric("Current capacity", number(sample.currentCapacity, " mAh"))
+                            metric("Design capacity", number(sample.designCapacity, " mAh"))
+                            metric("Temperature", decimal(sample.temperatureCelsius, " °C"))
+                            metric("Current", number(sample.currentMilliamps, " mA"))
+                            metric("Voltage", number(sample.voltageMillivolts, " mV"))
+                            metric("Cycles", number(sample.cycles))
+                            metric("AC / Charging", yesNo(sample.externalPower) + " / " + yesNo(sample.isCharging))
+                            metric("Health", sample.condition ?? "Unavailable")
+                        }.padding(.vertical, 4)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(DateFormatter.localizedString(from: sample.capturedAt, dateStyle: .short, timeStyle: .medium))
+                                .font(.caption).foregroundColor(.secondary)
+                            Text(number(sample.percentage, "%") + "  ·  " + number(sample.maxCapacity, " mAh") + "  ·  " + decimal(sample.temperatureCelsius, " °C"))
+                                .font(.callout).monospacedDigit()
+                        }
                     }
+                    Divider()
                 }
             }
         }
