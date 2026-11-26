@@ -91,7 +91,7 @@ struct PopoverView: View {
                     Spacer()
                     Text("Unavailable").font(.caption).foregroundColor(.secondary)
                 }
-                Text("Safe hardware control has not been verified on this Mac. Durly does not change charging.")
+                Text(model.controlExplanation)
                     .font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Toggle("Show diagnostics", isOn: Binding(get: { model.settings.showDetails },
