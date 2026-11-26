@@ -55,10 +55,13 @@ public struct ControlContext: Equatable {
         self.now = now
     }
 
-    public func validate() throws {
+    public func validate() throws { try validate(at: now) }
+
+    public func validate(at time: Date) throws {
         guard authorized else { throw ControlBlock.permissionDenied }
         guard competitorAbsent else { throw ControlBlock.competingController }
-        guard let snapshot = snapshot, !snapshot.isStale(at: now, maximumAge: 15) else {
+        guard let snapshot = snapshot, !snapshot.isStale(at: time, maximumAge: 15),
+              time.timeIntervalSince(snapshot.capturedAt).isFinite else {
             throw ControlBlock.staleTelemetry
         }
         // Conservative research policy, not a validated hardware temperature threshold.
@@ -73,28 +76,30 @@ public struct ControlContext: Equatable {
 public enum RecoveryPhase: Equatable { case prepared, applied, restoring }
 
 public struct RecoveryRecord: Equatable {
+    public let transactionID: UUID
     public let baseline: Int
     public let expected: Int
     public let phase: RecoveryPhase
-    public init(baseline: Int, expected: Int, phase: RecoveryPhase = .prepared) {
+    public init(baseline: Int, expected: Int, phase: RecoveryPhase = .prepared, transactionID: UUID = UUID()) {
+        self.transactionID = transactionID
         self.baseline = baseline
         self.expected = expected
         self.phase = phase
     }
 
     fileprivate func withPhase(_ phase: RecoveryPhase) -> RecoveryRecord {
-        RecoveryRecord(baseline: baseline, expected: expected, phase: phase)
+        RecoveryRecord(baseline: baseline, expected: expected, phase: phase, transactionID: transactionID)
     }
 }
 
 public enum ControlTransaction {
     public static func prepare(limit: Int, live: Int, existing: RecoveryRecord?,
-                               context: ControlContext) throws -> RecoveryRecord {
+                               context: ControlContext, transactionID: UUID) throws -> RecoveryRecord {
         try context.validate()
         guard (50...100).contains(limit) else { throw ControlBlock.invalidLimit }
         guard (50...100).contains(live) else { throw ControlBlock.unknownBaseline }
         guard existing == nil else { throw ControlBlock.recoveryRequired }
-        return RecoveryRecord(baseline: live, expected: limit)
+        return RecoveryRecord(baseline: live, expected: limit, transactionID: transactionID)
     }
 
     public static func verify(record: RecoveryRecord, readback: Int) throws {
@@ -129,12 +134,14 @@ public final class SimulatedTransactionCoordinator {
     private static let transactionLock = NSLock()
     private let transport: LimitTransport
     private let journal: RecoveryJournal
+    private let clock: () -> Date
     private var latched = false
     private var ownedRecord: RecoveryRecord?
 
-    public init(transport: LimitTransport, journal: RecoveryJournal) {
+    public init(transport: LimitTransport, journal: RecoveryJournal, clock: @escaping () -> Date = Date.init) {
         self.transport = transport
         self.journal = journal
+        self.clock = clock
     }
 
     private func loadRecord() throws -> RecoveryRecord? {
@@ -151,15 +158,20 @@ public final class SimulatedTransactionCoordinator {
         Self.transactionLock.lock()
         defer { Self.transactionLock.unlock() }
         guard !latched else { throw ControlBlock.recoveryRequired }
-        try context.validate()
-        guard try loadRecord() == nil, ownedRecord == nil else {
+        let loaded = try loadRecord()
+        guard loaded == ownedRecord else {
+            latched = true
             throw ControlBlock.recoveryRequired
         }
+        // An ordinary duplicate apply must not prevent the owner from pausing.
+        guard ownedRecord == nil else { throw ControlBlock.recoveryRequired }
+        try context.validate(at: clock())
         let live = try transport.read()
-        let record = try ControlTransaction.prepare(limit: limit, live: live, existing: nil, context: context)
+        let record = try ControlTransaction.prepare(limit: limit, live: live, existing: nil, context: context, transactionID: UUID())
         try saveRecord(record)
         do {
             guard try transport.read() == record.baseline else { throw ControlBlock.recoveryRequired }
+            try context.validate(at: clock())
             try transport.write(record.expected)
             try ControlTransaction.verify(record: record, readback: transport.read())
             let applied = record.withPhase(.applied)
@@ -175,7 +187,6 @@ public final class SimulatedTransactionCoordinator {
         Self.transactionLock.lock()
         defer { Self.transactionLock.unlock() }
         guard !latched else { throw ControlBlock.recoveryRequired }
-        try context.validate()
         let loaded = try loadRecord()
         guard let record = loaded else {
             guard ownedRecord == nil else {
@@ -190,10 +201,12 @@ public final class SimulatedTransactionCoordinator {
             latched = true
             throw ControlBlock.recoveryRequired
         }
+        try context.validate(at: clock())
         do {
             let baseline = try ControlTransaction.restore(record: record, live: transport.read(), context: context)
             try saveRecord(record.withPhase(.restoring))
             guard try transport.read() == record.expected else { throw ControlBlock.recoveryRequired }
+            try context.validate(at: clock())
             try transport.write(baseline)
             guard try transport.read() == baseline else { throw ControlBlock.readbackMismatch }
             do { try journal.clear() }
