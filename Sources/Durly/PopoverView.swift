@@ -5,6 +5,7 @@ struct PopoverView: View {
     @ObservedObject var model: PopoverModel
     let quit: () -> Void
     @State private var showSettings = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -58,10 +59,10 @@ struct PopoverView: View {
                     .font(.callout)
             }
             if let warning = model.healthWarning {
-                Label(warning, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout).foregroundColor(.orange)
+                Label(warning, systemImage: model.healthSeverity == .service ? "exclamationmark.triangle.fill" : "exclamationmark.triangle")
+                    .font(.callout).foregroundColor(healthColor)
                     .accessibilityLabel("Battery health warning: \(warning)")
-            } else if model.snapshot?.condition == nil {
+            } else if model.healthSeverity == .unknown {
                 Text("Battery health unavailable").font(.caption).foregroundColor(.secondary)
             }
             Divider()
@@ -85,6 +86,21 @@ struct PopoverView: View {
             if model.settings.showDetails {
                 diagnostics
             }
+        }
+    }
+
+    private var healthColor: Color {
+        switch model.healthSeverity {
+        case .warning:
+            return colorScheme == .dark
+                ? Color(red: 0.88, green: 0.59, blue: 0.59)
+                : Color(red: 0.62, green: 0.24, blue: 0.27)
+        case .service:
+            return colorScheme == .dark
+                ? Color(red: 1.0, green: 0.43, blue: 0.45)
+                : Color(red: 0.68, green: 0.12, blue: 0.17)
+        case .normal, .unknown:
+            return .secondary
         }
     }
 
