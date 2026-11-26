@@ -23,6 +23,9 @@ final class BatteryTests: XCTestCase {
         XCTAssertTrue(gate.shouldCapture(sample(10, false), uptime: 110, now: t.addingTimeInterval(10)))
         XCTAssertTrue(gate.shouldCapture(sample(60, true), uptime: 160, now: t.addingTimeInterval(60)))
         XCTAssertTrue(!gate.shouldCapture(first, uptime: 161, now: t.addingTimeInterval(61)))
+        let changed = BatteryDecoder.decode(registry: ["ExternalConnected": true, "Voltage": 11800],
+            powerSource: ["Current Capacity": 80, "Max Capacity": 100], capturedAt: t.addingTimeInterval(5))
+        XCTAssertTrue(gate.shouldCapture(changed, uptime: 105, now: t.addingTimeInterval(5)))
         gate.suspend()
         XCTAssertTrue(!gate.shouldCapture(sample(60, true), uptime: 160, now: t.addingTimeInterval(60)))
     }
