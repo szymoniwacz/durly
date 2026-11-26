@@ -18,7 +18,7 @@ public enum SMCReadError: Error, Equatable {
     case unsupportedDevice, serviceUnavailable, connectionFailed(Int32)
     case driverFailed(Int32), malformedResponse, keyNotFound
     case controllerFailed(UInt8), unexpectedMetadata(size: UInt32, type: UInt32)
-    case closeFailed(Int32)
+    case closeFailed(Int32), unknownCloseFailure, sessionBlocked
 }
 
 // No arbitrary key, opcode, or write method is exposed by this reader.
@@ -71,5 +71,50 @@ public struct SMCChargeReader {
         var value: UInt32 = 0
         for i in 0..<4 { value |= UInt32(bytes[offset + i]) << (8 * i) }
         return value
+    }
+}
+
+// Independent read eligibility, not permission to write.
+public enum SMCProbeTarget {
+    public static func supports(model: String, os: String, architecture: String) -> Bool {
+        model == "MacBookPro11,5" && os == "12.7.6" && architecture == "x86_64"
+    }
+}
+
+public struct SMCProbeReport {
+    public let values: [SMCChargeKey: Result<UInt8, Error>]
+    public let startedAt: Date
+    public let completedAt: Date
+    public let closeError: SMCReadError?
+}
+
+// One instance per process/native resource. A failed close permanently
+// disables subsequent opens for that instance; no retries on uncertainty.
+public final class SMCProbeSession {
+    private let lock = NSLock()
+    private var blocked = false
+
+    public init() {}
+
+    public func run(open: () throws -> SMCChargeReader,
+                    close: () throws -> Void,
+                    clock: () -> Date = Date.init) throws -> SMCProbeReport {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !blocked else { throw SMCReadError.sessionBlocked }
+        let startedAt = clock()
+        let reader = try open()
+        var values: [SMCChargeKey: Result<UInt8, Error>] = [:]
+        for key in SMCChargeKey.allCases {
+            values[key] = Result { try reader.read(key) }
+        }
+        var closeError: SMCReadError?
+        do { try close() }
+        catch {
+            blocked = true
+            closeError = error as? SMCReadError ?? .unknownCloseFailure
+        }
+        return SMCProbeReport(values: values, startedAt: startedAt,
+                              completedAt: clock(), closeError: closeError)
     }
 }
