@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 #if !MANUAL_TESTS
 import XCTest
 #endif
@@ -177,7 +178,7 @@ final class BatteryTests: XCTestCase {
         do {
             try coordinator.apply(limit: 82, context: controlContext())
             XCTAssertEqual(transport.value, 82)
-            XCTAssertEqual(journal.record, RecoveryRecord(baseline: 76, expected: 82))
+            XCTAssertEqual(journal.record, RecoveryRecord(baseline: 76, expected: 82, phase: .applied))
             try coordinator.pause(context: controlContext())
             XCTAssertEqual(transport.value, 76)
             XCTAssertNil(journal.record)
@@ -219,6 +220,92 @@ final class BatteryTests: XCTestCase {
         XCTAssertEqual(transport.writes, [])
     }
 
+    func testRestartCannotRestoreUncertainOrPreviouslyAppliedTransaction() {
+        for uncertain in [true, false] {
+            let transport = TestTransport()
+            let journal = TestJournal()
+            let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+            transport.failAfterWrite = uncertain
+            if uncertain {
+                expectControlError(.writeFailed) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+            } else {
+                do { try coordinator.apply(limit: 82, context: controlContext()) }
+                catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+            }
+            XCTAssertEqual(transport.value, 82)
+            XCTAssertEqual(journal.record?.phase, uncertain ? .prepared : .applied)
+            transport.failAfterWrite = false
+            let restarted = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+            expectControlError(.recoveryRequired) { try restarted.pause(context: self.controlContext()) }
+            expectControlError(.recoveryRequired) { try restarted.apply(limit: 80, context: self.controlContext()) }
+            XCTAssertEqual(transport.writes, [82])
+        }
+    }
+
+    func testJournalLoadFailureLatchesApplyAndPause() {
+        for pause in [true, false] {
+            let transport = TestTransport()
+            let journal = TestJournal()
+            let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+            journal.failLoad = true
+            if pause {
+                expectControlError(.journalFailed) { try coordinator.pause(context: self.controlContext()) }
+            } else {
+                expectControlError(.journalFailed) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+            }
+            journal.failLoad = false
+            expectControlError(.recoveryRequired) { try coordinator.apply(limit: 82, context: self.controlContext()) }
+            expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+            XCTAssertEqual(transport.writes, [])
+        }
+    }
+
+    func testFailedRollbackRetainsRestoringPhase() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+        do { try coordinator.apply(limit: 82, context: controlContext()) }
+        catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        transport.failWrite = true
+        expectControlError(.writeFailed) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(journal.record?.phase, .restoring)
+        transport.failWrite = false
+        let restarted = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+        expectControlError(.recoveryRequired) { try restarted.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82, 76])
+    }
+
+    func testFailedJournalClearDoesNotRepeatRollback() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let coordinator = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+        do { try coordinator.apply(limit: 82, context: controlContext()) }
+        catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        journal.failClear = true
+        expectControlError(.journalFailed) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.value, 76)
+        XCTAssertEqual(journal.record?.phase, .restoring)
+        journal.failClear = false
+        expectControlError(.recoveryRequired) { try coordinator.pause(context: self.controlContext()) }
+        XCTAssertEqual(transport.writes, [82, 76])
+    }
+
+    func testConcurrentCoordinatorsCannotReplaceBaseline() {
+        let transport = TestTransport()
+        let journal = TestJournal()
+        let first = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+        let second = SimulatedTransactionCoordinator(transport: transport, journal: journal)
+        let context = controlContext()
+        DispatchQueue.concurrentPerform(iterations: 32) { index in
+            let coordinator = index % 2 == 0 ? first : second
+            do { try coordinator.apply(limit: 82, context: context) }
+            catch ControlBlock.recoveryRequired { }
+            catch { /* Unexpected errors are detected by the final state assertions. */ }
+        }
+        XCTAssertEqual(transport.writes, [82])
+        XCTAssertEqual(journal.record, RecoveryRecord(baseline: 76, expected: 82, phase: .applied))
+    }
+
     private func controlContext(authorized: Bool = true, competitorAbsent: Bool = true, age: TimeInterval = 0,
                                 health: String = "Normal", ac: Bool = true, temperature: Int = 3000) -> ControlContext {
         let now = Date(timeIntervalSince1970: 1000)
@@ -242,23 +329,33 @@ final class BatteryTests: XCTestCase {
         var writes: [Int] = []
         var failWrite = false
         var ignoreWrite = false
+        var failAfterWrite = false
         func read() throws -> Int { value }
         func write(_ value: Int) throws {
             writes.append(value)
             if failWrite { throw ControlBlock.writeFailed }
             if !ignoreWrite { self.value = value }
+            if failAfterWrite { throw ControlBlock.writeFailed }
         }
     }
 
     private final class TestJournal: RecoveryJournal {
         var record: RecoveryRecord?
         var failSave = false
-        func load() throws -> RecoveryRecord? { record }
+        var failLoad = false
+        var failClear = false
+        func load() throws -> RecoveryRecord? {
+            if failLoad { throw ControlBlock.journalFailed }
+            return record
+        }
         func save(_ record: RecoveryRecord) throws {
             if failSave { throw ControlBlock.journalFailed }
             self.record = record
         }
-        func clear() throws { record = nil }
+        func clear() throws {
+            if failClear { throw ControlBlock.journalFailed }
+            record = nil
+        }
     }
 
     private final class MockProvider: BatteryProvider {
