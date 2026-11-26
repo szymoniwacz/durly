@@ -12,7 +12,7 @@ final class PopoverModel: ObservableObject {
     var controlExplanation: String {
         powerControl.capability.reason == .unsupportedDevice
             ? "Charge control is not verified for this Mac. Durly does not change charging."
-            : "Charge control research is complete; secure hardware access is not verified. Durly does not change charging."
+            : "Charge control is under investigation for this Mac. Durly does not change charging."
     }
     private let monitor: BatteryMonitor
     private let store: DisplaySettingsStore
