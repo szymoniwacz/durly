@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let popover = NSPopover()
     private var timer: Timer?
     private var activeInterval: Int?
+    private var expiryTimer: Timer?
+    private var wakeObserver: NSObjectProtocol?
+    private var sleepObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -18,34 +21,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.imagePosition = .imageLeading
         }
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: PopoverView(model: model, quit: {
-            NSApplication.shared.terminate(nil)
-        }))
         model.onChange = { [weak self] in self?.updatePresentation() }
-        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake(_:)),
-                                                         name: NSWorkspace.didWakeNotification, object: nil)
+        let center = NSWorkspace.shared.notificationCenter
+        wakeObserver = center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.model.refresh()
+        }
+        sleepObserver = center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.model.invalidateSnapshot()
+        }
         model.refresh()
     }
 
     private func updatePresentation() {
         let percentage = model.snapshot?.percentage
         if let button = statusItem?.button {
-            let symbol: String
-            if let percentage = percentage {
-                switch percentage {
-                case 0..<13: symbol = "battery.0"
-                case 13..<38: symbol = "battery.25"
-                case 38..<63: symbol = "battery.50"
-                case 63..<88: symbol = "battery.75"
-                default: symbol = "battery.100"
-                }
-            } else { symbol = "battery.0" }
-            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            button.image = NSImage(systemSymbolName: model.batterySymbol, accessibilityDescription: nil)
             button.image?.isTemplate = true
             let title = percentage.map { "\($0)%" } ?? "—"
             button.title = model.settings.showPercentage || percentage == nil ? title : ""
             button.setAccessibilityLabel("Durly, \(percentage.map { "\($0) percent" } ?? "battery data unavailable"), \(model.chargeState)")
         }
+        scheduleExpiry()
         let interval = model.settings.refreshSeconds
         if activeInterval != interval {
             timer?.invalidate()
@@ -60,7 +56,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func poll() { model.refresh() }
 
-    @objc private func didWake(_ notification: Notification) { model.refresh() }
+    private func scheduleExpiry() {
+        expiryTimer?.invalidate()
+        expiryTimer = nil
+        guard let snapshot = model.snapshot else { return }
+        let deadline = snapshot.capturedAt.addingTimeInterval(Double(model.settings.refreshSeconds + 5))
+        let next = Timer(fire: deadline.addingTimeInterval(0.1), interval: 0,
+                         repeats: false) { [weak self] _ in self?.model.expireStaleSnapshot() }
+        RunLoop.main.add(next, forMode: .common)
+        expiryTimer = next
+    }
 
     @objc private func togglePopover() {
         guard let button = statusItem?.button else { return }
@@ -68,6 +73,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(nil)
         } else {
             model.refresh()
+            let screenHeight = button.window?.screen?.visibleFrame.height ?? 700
+            popover.contentViewController = NSHostingController(rootView: PopoverView(model: model, maximumHeight: max(180, screenHeight - 60), quit: {
+                NSApplication.shared.terminate(nil)
+            }))
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
@@ -75,7 +84,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
-        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        expiryTimer?.invalidate()
+        let center = NSWorkspace.shared.notificationCenter
+        if let wakeObserver = wakeObserver { center.removeObserver(wakeObserver) }
+        if let sleepObserver = sleepObserver { center.removeObserver(sleepObserver) }
     }
 }
 
