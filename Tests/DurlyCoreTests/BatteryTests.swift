@@ -4,8 +4,80 @@ import Dispatch
 import XCTest
 #endif
 import DurlyCore
+#if canImport(SQLite3)
+import SQLite3
+#else
+import CSQLite
+#endif
 
 final class BatteryTests: XCTestCase {
+    func testHistoryMigratesExistingDatabaseAndExportsArchive() {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let url = folder.appendingPathComponent("history.sqlite")
+            let old = UUID()
+            let date = Date(timeIntervalSince1970: 1234.125)
+            let sample = BatteryDecoder.decode(registry: ["MaxCapacity": 4552], powerSource: [:], capturedAt: date)
+            let payload = String(decoding: try JSONEncoder().encode(sample), as: UTF8.self)
+            var raw: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(url.path, &raw), SQLITE_OK)
+            let sql = "CREATE TABLE battery_epoch(id TEXT PRIMARY KEY, created_at REAL NOT NULL);" +
+                "CREATE TABLE sample(id INTEGER PRIMARY KEY, epoch TEXT NOT NULL REFERENCES battery_epoch(id), captured_at REAL NOT NULL, payload TEXT NOT NULL, UNIQUE(epoch,captured_at));" +
+                "INSERT INTO battery_epoch VALUES ('" + old.uuidString + "',1234.125);" +
+                "INSERT INTO sample(epoch,captured_at,payload) VALUES ('" + old.uuidString + "',1234.125,'" + payload + "');" +
+                "PRAGMA user_version=1;"
+            XCTAssertEqual(sqlite3_exec(raw, sql, nil, nil, nil), SQLITE_OK)
+            XCTAssertEqual(sqlite3_close(raw), SQLITE_OK)
+            let store = try BatteryHistory(url: url)
+            let migrated = try store.samples(epoch: old)
+            XCTAssertEqual(migrated, [sample])
+            let current = try store.createEpoch(at: date.addingTimeInterval(60))
+            try store.append(sample, epoch: current)
+            try store.appendEvent(epoch: old, at: date, kind: .recordingStopped)
+            let output = folder.appendingPathComponent("archive.jsonl")
+            try store.export(epoch: old, to: output)
+            let lines = try String(contentsOf: output, encoding: .utf8).split(separator: "\n")
+            XCTAssertEqual(lines.count, 3)
+            XCTAssertTrue(lines.allSatisfy { (try? JSONSerialization.jsonObject(with: Data($0.utf8))) != nil })
+            do {
+                try store.export(epoch: old, to: output)
+                XCTAssertTrue(false)
+            } catch {}
+            do {
+                try store.deleteArchivedEpoch(current)
+                XCTAssertTrue(false)
+            } catch {}
+            try store.deleteArchivedEpoch(old)
+            let remaining = try store.epochs()
+            XCTAssertEqual(remaining.map { $0.id }, [current])
+            let removed = try store.samples(epoch: old)
+            let events = try store.events(epoch: old)
+            let preserved = try store.samples(epoch: current)
+            XCTAssertTrue(removed.isEmpty)
+            XCTAssertTrue(events.isEmpty)
+            XCTAssertEqual(preserved, [sample])
+        } catch { XCTAssertTrue(false) }
+    }
+
+    func testHistoryRejectsFutureSchemaAndInvalidPath() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var raw: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &raw), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(raw, "PRAGMA user_version=99", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(raw), SQLITE_OK)
+        do {
+            _ = try BatteryHistory(url: url)
+            XCTAssertTrue(false)
+        } catch {}
+        do {
+            _ = try BatteryHistory(url: url.appendingPathComponent("invalid.sqlite"))
+            XCTAssertTrue(false)
+        } catch {}
+    }
+
     func testHistoryEventsPersistAndRemainSeparated() {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".sqlite")
         defer { try? FileManager.default.removeItem(at: url) }
