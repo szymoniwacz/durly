@@ -8,6 +8,8 @@ struct PopoverView: View {
     @State private var showSettings = false
     @State private var confirmReplacement = false
     @State private var showHistory = false
+    @State private var pendingDelete: UUID?
+    @State private var confirmDelete = false
     @State private var contentHeight: CGFloat = 1
     @Environment(\.colorScheme) private var colorScheme
 
@@ -155,6 +157,28 @@ struct PopoverView: View {
             if let epoch = model.historyEpochs.first(where: { $0.id == model.viewedEpoch }) {
                 Text("Registered " + DateFormatter.localizedString(from: epoch.createdAt, dateStyle: .short, timeStyle: .none) + " · " + String(epoch.sampleCount) + " samples")
                     .font(.caption).foregroundColor(.secondary)
+            }
+            Group {
+                HStack {
+                    Button("Export history", action: model.exportSelectedHistory)
+                        .disabled(model.viewedEpoch == nil)
+                    if let epoch = model.viewedEpoch, epoch != model.previousEpoch {
+                        Button("Delete archive") {
+                            pendingDelete = epoch
+                            confirmDelete = true
+                        }
+                        .alert("Permanently delete this battery archive?", isPresented: $confirmDelete) {
+                            Button("Cancel", role: .cancel) { pendingDelete = nil }
+                            Button("Delete", role: .destructive) {
+                                if let id = pendingDelete { model.deleteSelectedArchive(id) }
+                                pendingDelete = nil
+                            }
+                        } message: { Text("All saved samples and events for this archived battery will be deleted. Export first if needed.") }
+                    }
+                }
+                if let status = model.historyActionStatus {
+                    Text(status).font(.caption)
+                }
             }
             if let baseline = model.observedBaseline {
                 Text("First observed capacity: " + number(baseline.maxCapacity, " mAh"))
