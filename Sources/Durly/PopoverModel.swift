@@ -26,7 +26,27 @@ final class PopoverModel: ObservableObject {
     @Published private(set) var historyReadError = false
     private var history: BatteryHistory?
     private var capture = HistoryCapture()
-    private var previousEpoch: UUID?
+    @Published private(set) var previousEpoch: UUID?
+    @Published private(set) var historyEpochs: [BatteryEpoch] = []
+    @Published private(set) var viewedEpoch: UUID?
+    @Published private(set) var observedBaseline: BatterySnapshot?
+    private var historyLimit = 20
+
+    func selectHistory(_ id: UUID?) {
+        viewedEpoch = id
+        historyLimit = 20
+        loadHistory()
+    }
+
+    func showMoreHistory() {
+        historyLimit = min(historyLimit + 20, 10000)
+        loadHistory()
+    }
+
+    var canShowMoreHistory: Bool {
+        guard let epoch = historyEpochs.first(where: { $0.id == viewedEpoch }) else { return false }
+        return Int64(recentHistory.count) < epoch.sampleCount && historyLimit < 10000
+    }
 
     private let monitor: BatteryMonitor
     private let store: DisplaySettingsStore
@@ -59,20 +79,32 @@ final class PopoverModel: ObservableObject {
     }
 
     func loadHistory() {
-        guard let history = history, let epoch = previousEpoch else {
+        guard let history = history else {
             recentHistory = []
+            observedBaseline = nil
+            historyReadError = true
             return
         }
         do {
-            recentHistory = try history.samples(epoch: epoch, limit: 20)
+            historyEpochs = try history.epochs()
+            if viewedEpoch == nil { viewedEpoch = previousEpoch }
+            guard let epoch = viewedEpoch else {
+                recentHistory = []
+                observedBaseline = nil
+                return
+            }
+            recentHistory = try history.samples(epoch: epoch, limit: historyLimit)
+            observedBaseline = try history.observedBaseline(epoch: epoch)
             historyReadError = false
         } catch {
             recentHistory = []
+            observedBaseline = nil
             historyReadError = true
         }
     }
 
     func confirmBattery(replacement: Bool) {
+        if replacement { stopRecording() }
         monitor.refresh()
         snapshot = BatteryPresentation.fresh(monitor.snapshot, settings: settings)
         onChange?()
@@ -92,6 +124,7 @@ final class PopoverModel: ObservableObject {
             } else { return }
             previousEpoch = id
             previousEpochAvailable = true
+            if replacement || viewedEpoch == nil { viewedEpoch = id; historyLimit = 20 }
             capture.select(id)
             recordingHistory = true
             recordHistory()
