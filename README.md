@@ -31,7 +31,7 @@ bash tests/test-adapter.sh
 
 Do not commit reusable private workflow files. See [development setup](docs/setup.md) and [active scope](.ai/project/scope.md).
 
-### Build and run locally (macOS 12+)
+### Build and run locally (Intel Mac, Monterey 12.7.6 validated)
 
 ```bash
 bash scripts/test-local.sh
@@ -39,7 +39,7 @@ bash scripts/build-app.sh
 open dist/Durly.app
 ```
 
-The app uses an ad-hoc local signature, not notarized distribution. Local scripts use swiftc directly because the target CLT lacks the PackageDescription module and XCTest. Linux runs the portable core tests (`swift test` and `bash scripts/test-local.sh`); it does not compile AppKit or IOKit. No hardware writes, root access or bclm dependency.
+The build script targets x86_64 macOS 12.0; other models and OS versions are not yet validated. The app uses an ad-hoc local signature, not notarized distribution. Local scripts use swiftc directly because the target CLT lacks the PackageDescription module and XCTest. Linux runs the portable core tests (`swift test` and `bash scripts/test-local.sh`); it does not compile AppKit or IOKit. No hardware writes, root access or bclm dependency.
 
 ## License
 
