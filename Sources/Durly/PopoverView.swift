@@ -65,17 +65,21 @@ struct PopoverView: View {
                 Text("Battery health unavailable").font(.caption).foregroundColor(.secondary)
             }
             Divider()
-            metric("Estimated capacity retention", decimal(model.snapshot?.capacityRetention, "%"))
-            metric("Cycle count", number(model.snapshot?.cycles))
-            metric("Temperature (estimate)", decimal(model.snapshot?.temperatureCelsius, " °C"))
-            Divider()
-            HStack {
-                Text("Charge control").font(.subheadline.weight(.medium))
-                Spacer()
-                Text("Unavailable").font(.caption).foregroundColor(.secondary)
+            Group {
+                metric("Estimated capacity retention", decimal(model.snapshot?.capacityRetention, "%"))
+                metric("Cycle count", number(model.snapshot?.cycles))
+                metric("Temperature (estimate)", decimal(model.snapshot?.temperatureCelsius, " °C"))
             }
-            Text("Safe hardware control has not been verified on this Mac. Durly does not change charging.")
-                .font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+            Divider()
+            Group {
+                HStack {
+                    Text("Charge control").font(.subheadline.weight(.medium))
+                    Spacer()
+                    Text("Unavailable").font(.caption).foregroundColor(.secondary)
+                }
+                Text("Safe hardware control has not been verified on this Mac. Durly does not change charging.")
+                    .font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             Toggle("Show diagnostics", isOn: Binding(get: { model.settings.showDetails },
                                                     set: { model.update(showDetails: $0) }))
             if model.settings.showDetails {
