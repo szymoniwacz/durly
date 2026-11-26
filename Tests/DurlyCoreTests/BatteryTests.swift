@@ -503,6 +503,196 @@ final class BatteryTests: XCTestCase {
         XCTAssertEqual(transport.writes, [82, 76])
     }
 
+    func testSMCReadOnlyExactFramesForBothKeys() {
+        for key in SMCChargeKey.allCases {
+            var requests: [[UInt8]] = []
+            let reader = SMCChargeReader { request in
+                requests.append(request)
+                var reply = self.smcMetadata()
+                if requests.count == 2 { reply[48] = 76 }
+                return reply
+            }
+            do { let actual = try reader.read(key); XCTAssertEqual(actual, 76) }
+            catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+            var expected = [UInt8](repeating: 0, count: 80)
+            expected.replaceSubrange(0..<4, with: key == .bclm ? [0x4D, 0x4C, 0x43, 0x42] : [0x4C, 0x43, 0x46, 0x42])
+            expected[42] = 9
+            var read = expected
+            read[28] = 1
+            read[42] = 5
+            XCTAssertEqual(requests, [expected, read])
+        }
+    }
+
+    func testSMCInvalidMetadataNeverRequestsData() {
+        for (size, type) in [(0, 0x75693820), (2, 0x75693820), (255, 0x75693820), (1, 0x666C6167)] {
+            var calls = 0
+            let reader = SMCChargeReader { _ in
+                calls += 1
+                var reply = self.smcMetadata()
+                reply[28] = UInt8(size)
+                for i in 0..<4 { reply[32 + i] = UInt8(truncatingIfNeeded: type >> (8 * i)) }
+                return reply
+            }
+            expectSMCError(.unexpectedMetadata(size: UInt32(size), type: UInt32(type))) { _ = try reader.read(.bclm) }
+            XCTAssertEqual(calls, 1)
+        }
+    }
+
+    func testSMCRejectsMalformedFramesAtBothStages() {
+        for stage in [1, 2] {
+            for length in [0, 40, 79, 81] {
+                var calls = 0
+                let reader = SMCChargeReader { _ in
+                    calls += 1
+                    return calls == stage ? [UInt8](repeating: 0, count: length) : self.smcMetadata()
+                }
+                expectSMCError(.malformedResponse) { _ = try reader.read(.bfcl) }
+                XCTAssertEqual(calls, stage)
+            }
+        }
+    }
+
+    func testSMCRejectsControllerErrorsAtBothStages() {
+        for stage in [1, 2] {
+            for status in [UInt8(1), 132, 255] {
+                var calls = 0
+                let reader = SMCChargeReader { _ in
+                    calls += 1
+                    var reply = self.smcMetadata()
+                    if calls == stage { reply[40] = status }
+                    return reply
+                }
+                expectSMCError(status == 132 ? .keyNotFound : .controllerFailed(status)) { _ = try reader.read(.bclm) }
+                XCTAssertEqual(calls, stage)
+            }
+        }
+    }
+
+    func testSMCPropagatesTransportErrorsWithoutRetry() {
+        for stage in [1, 2] {
+            var calls = 0
+            let reader = SMCChargeReader { _ in
+                calls += 1
+                if calls == stage { throw SMCReadError.driverFailed(-1) }
+                return self.smcMetadata()
+            }
+            expectSMCError(.driverFailed(-1)) { _ = try reader.read(.bfcl) }
+            XCTAssertEqual(calls, stage)
+        }
+    }
+
+    func testSMCPreservesRawBytesWithoutAssumingValidLimit() {
+        for value in [UInt8(0), 15, 76, 100, 255] {
+            var calls = 0
+            let reader = SMCChargeReader { _ in
+                calls += 1
+                var reply = self.smcMetadata()
+                if calls == 2 { reply[48] = value }
+                return reply
+            }
+            do { let actual = try reader.read(.bclm); XCTAssertEqual(actual, value) }
+            catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+            XCTAssertEqual(calls, 2)
+        }
+    }
+
+    func testSMCProbeTargetRequiresExactIdentity() {
+        XCTAssertTrue(SMCProbeTarget.supports(model: "MacBookPro11,5", os: "12.7.6", architecture: "x86_64"))
+        XCTAssertTrue(!SMCProbeTarget.supports(model: "MacBookPro11,4", os: "12.7.6", architecture: "x86_64"))
+        XCTAssertTrue(!SMCProbeTarget.supports(model: "MacBookPro11,5", os: "12.7.5", architecture: "x86_64"))
+        XCTAssertTrue(!SMCProbeTarget.supports(model: "MacBookPro11,5", os: "12.7.6", architecture: "arm64"))
+        XCTAssertTrue(!SMCProbeTarget.supports(model: "", os: "12.7.6", architecture: "x86_64"))
+    }
+
+    func testSMCProbeCloseFailurePreservesResultsAndBlocksFutureOpen() {
+        let session = SMCProbeSession()
+        var opens = 0
+        var closes = 0
+        var reads = 0
+        var time = Date(timeIntervalSince1970: 1000)
+        let open: () throws -> SMCChargeReader = {
+            opens += 1
+            return SMCChargeReader { request in
+                reads += 1
+                var reply = self.smcMetadata()
+                if request[0] == 0x4C { reply[40] = 132 }
+                if request[42] == 5 { reply[48] = 76 }
+                return reply
+            }
+        }
+        let close: () throws -> Void = {
+            closes += 1
+            time = Date(timeIntervalSince1970: 1002)
+            throw SMCReadError.closeFailed(-1)
+        }
+        do {
+            let report = try session.run(open: open, close: close, clock: { time })
+            let value = try report.values[.bclm]?.get()
+            XCTAssertEqual(value, 76)
+            if case .failure(let error)? = report.values[.bfcl] {
+                XCTAssertEqual(error as? SMCReadError, .keyNotFound)
+            } else { XCTAssertTrue(false) }
+            XCTAssertEqual(report.closeError, .closeFailed(-1))
+            XCTAssertEqual(report.startedAt, Date(timeIntervalSince1970: 1000))
+            XCTAssertEqual(report.completedAt, Date(timeIntervalSince1970: 1002))
+        } catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        expectSMCError(.sessionBlocked) { _ = try session.run(open: open, close: close) }
+        XCTAssertEqual(opens, 1)
+        XCTAssertEqual(closes, 1)
+        XCTAssertEqual(reads, 3)
+    }
+
+    func testSMCProbeSuccessfulCloseAllowsRepeatEvenWhenReadsFail() {
+        let session = SMCProbeSession()
+        var opens = 0
+        var closes = 0
+        for _ in 0..<2 {
+            do {
+                let report = try session.run(open: {
+                    opens += 1
+                    return SMCChargeReader { _ in throw SMCReadError.driverFailed(-1) }
+                }, close: { closes += 1 })
+                XCTAssertNil(report.closeError)
+                XCTAssertEqual(report.values.count, 2)
+                for key in SMCChargeKey.allCases {
+                    if case .failure(let error)? = report.values[key] {
+                        XCTAssertEqual(error as? SMCReadError, .driverFailed(-1))
+                    } else { XCTAssertTrue(false) }
+                }
+            } catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        }
+        XCTAssertEqual(opens, 2)
+        XCTAssertEqual(closes, 2)
+    }
+
+    func testSMCProbeOpenFailureDoesNotCloseOrLatch() {
+        let session = SMCProbeSession()
+        var closes = 0
+        expectSMCError(.serviceUnavailable) {
+            _ = try session.run(open: { throw SMCReadError.serviceUnavailable }, close: { closes += 1 })
+        }
+        XCTAssertEqual(closes, 0)
+        do {
+            let report = try session.run(open: { SMCChargeReader { _ in self.smcMetadata() } },
+                                         close: { closes += 1 })
+            XCTAssertNil(report.closeError)
+        } catch { XCTAssertEqual(String(describing: error), "unexpected error") }
+        XCTAssertEqual(closes, 1)
+    }
+
+    private func smcMetadata() -> [UInt8] {
+        var reply = [UInt8](repeating: 0, count: 80)
+        reply[28] = 1
+        reply.replaceSubrange(32..<36, with: [0x20, 0x38, 0x69, 0x75])
+        return reply
+    }
+
+    private func expectSMCError(_ expected: SMCReadError, _ operation: () throws -> Void) {
+        do { try operation(); XCTAssertEqual("no error", String(describing: expected)) }
+        catch { XCTAssertEqual(error as? SMCReadError, expected) }
+    }
+
     private func assertRecord(_ record: RecoveryRecord?, phase: RecoveryPhase) {
         XCTAssertEqual(record?.baseline, 76)
         XCTAssertEqual(record?.expected, 82)

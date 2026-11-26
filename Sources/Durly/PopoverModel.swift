@@ -1,12 +1,17 @@
 import Foundation
-import Darwin
 import Combine
+import Dispatch
 import DurlyCore
 
 final class PopoverModel: ObservableObject {
     @Published private(set) var snapshot: BatterySnapshot?
     @Published private(set) var settings: DisplaySettings
     var unavailable: Bool { snapshot == nil }
+
+    @Published private(set) var smcProbeRunning = false
+    @Published private(set) var smcProbeReport: String?
+    @Published private(set) var smcProbeBlocked = false
+    let canProbeSMC: Bool
 
     private let powerControl: PowerControl
     var controlExplanation: String {
@@ -19,30 +24,51 @@ final class PopoverModel: ObservableObject {
     var onChange: (() -> Void)?
 
     init(provider: BatteryProvider, store: DisplaySettingsStore = DisplaySettingsStore()) {
-        var size = 0
-        var model = ""
-        if sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0, size < 1024 {
-            var buffer = [CChar](repeating: 0, count: size)
-            let status = buffer.withUnsafeMutableBytes { bytes in
-                sysctlbyname("hw.model", bytes.baseAddress, &size, nil, 0)
-            }
-            if status == 0, size > 0, size <= buffer.count,
-               let terminator = buffer.prefix(size).firstIndex(of: 0), terminator == size - 1 {
-                model = String(bytes: buffer.prefix(terminator).map { UInt8(bitPattern: $0) }, encoding: .utf8) ?? ""
-            }
-        }
-        let version = ProcessInfo.processInfo.operatingSystemVersion
-        let os = "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
-        #if arch(x86_64)
-        let architecture = "x86_64"
-        #else
-        let architecture = "other"
-        #endif
-        let capability = ControlCapabilityDetector.detect(model: model, os: os, architecture: architecture)
+        let identity = NativeSMCProbe.platformIdentity()
+        self.canProbeSMC = SMCProbeTarget.supports(model: identity.model, os: identity.os, architecture: identity.architecture)
+        let capability = ControlCapabilityDetector.detect(model: identity.model, os: identity.os, architecture: identity.architecture)
         self.powerControl = ReadOnlyBackend(reason: capability.reason ?? .unverifiedBackend)
         self.monitor = BatteryMonitor(provider: provider)
         self.store = store
         self.settings = store.load()
+    }
+
+    // Explicit, one-shot diagnostic only; never poll the private driver.
+    func probeSMC() {
+        guard canProbeSMC, !smcProbeRunning, !smcProbeBlocked else { return }
+        smcProbeRunning = true
+        smcProbeReport = nil
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let report: String
+            let blocked: Bool
+            let formatter = ISO8601DateFormatter()
+            formatter.timeZone = TimeZone.current
+            do {
+                let result = try NativeSMCProbe.read()
+                var lines = ["Started: " + formatter.string(from: result.startedAt),
+                             "Completed: " + formatter.string(from: result.completedAt)]
+                lines += SMCChargeKey.allCases.map { key in
+                    switch result.values[key] {
+                    case .success(let value)?: return "\(key.rawValue): \(value)"
+                    case .failure(let error)?: return "\(key.rawValue): \(error)"
+                    case nil: return "\(key.rawValue): unavailable"
+                    }
+                }
+                if let error = result.closeError {
+                    lines.append("Connection close failed: \(error). Further reads disabled until restart.")
+                }
+                report = lines.joined(separator: "\n")
+                blocked = result.closeError != nil
+            } catch {
+                report = "Attempt ended: " + formatter.string(from: Date()) + "\nSMC unavailable: \(error)"
+                blocked = (error as? SMCReadError) == .sessionBlocked
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.smcProbeReport = report
+                self?.smcProbeBlocked = blocked
+                self?.smcProbeRunning = false
+            }
+        }
     }
 
     func refresh() {

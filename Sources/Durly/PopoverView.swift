@@ -128,6 +128,14 @@ struct PopoverView: View {
             metric("Raw charge ratio", decimal(model.snapshot?.rawChargePercentage, "%"))
             metric("Current", number(model.snapshot?.currentMilliamps, " mA"))
             metric("Voltage", number(model.snapshot?.voltageMillivolts, " mV"))
+            if model.canProbeSMC {
+                Button(model.smcProbeRunning ? "Reading SMC…" : "Read SMC charge keys", action: model.probeSMC)
+                    .disabled(model.smcProbeRunning || model.smcProbeBlocked)
+                if let report = model.smcProbeReport {
+                    Text("Last manual probe (raw bytes)").foregroundColor(.secondary)
+                    Text(report).monospacedDigit().textSelection(.enabled)
+                }
+            }
         }.font(.caption)
     }
 
