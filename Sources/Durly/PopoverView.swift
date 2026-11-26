@@ -7,6 +7,7 @@ struct PopoverView: View {
     let quit: () -> Void
     @State private var showSettings = false
     @State private var confirmReplacement = false
+    @State private var showHistory = false
     @State private var contentHeight: CGFloat = 1
     @Environment(\.colorScheme) private var colorScheme
 
@@ -27,6 +28,8 @@ struct PopoverView: View {
                 Group {
                     if showSettings {
                         settingsPanel
+                    } else if showHistory {
+                        historyDetails
                     } else {
                         overview
                     }
@@ -110,10 +113,16 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Battery history").font(.subheadline.weight(.medium))
             Text(model.historyStatus).font(.caption).foregroundColor(.secondary)
-            if !model.recordingHistory {
-                Button(model.previousEpochAvailable ? "Continue same battery" : "Start recording battery") {
+            Button(model.recordingHistory ? "Stop recording" : "Start recording") {
+                if model.recordingHistory {
+                    model.stopRecording()
+                } else {
                     model.confirmBattery(replacement: false)
-                }.disabled(model.unavailable)
+                }
+            }.disabled(!model.recordingHistory && model.unavailable)
+            if model.previousEpochAvailable && !model.recordingHistory {
+                Text("Start only if the same battery is installed.").font(.caption)
+                    .foregroundColor(.secondary)
             }
             if model.previousEpochAvailable {
                 Button("Register replacement battery") { confirmReplacement = true }
@@ -121,7 +130,41 @@ struct PopoverView: View {
                     .alert("Start a separate battery history?", isPresented: $confirmReplacement) {
                         Button("Cancel", role: .cancel) {}
                         Button("Confirm replacement") { model.confirmBattery(replacement: true) }
-                    } message: { Text("Only confirm if the physical battery was replaced. Previous history is preserved.") }
+                    } message: { Text("Only confirm if the physical battery was replaced. Previous history is preserved. Recording starts for the new battery.") }
+                Button("View history") {
+                    model.loadHistory()
+                    showHistory = true
+                }
+            }
+        }
+    }
+
+    private var historyDetails: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Battery history").font(.headline)
+                Spacer()
+                Button("Back") { showHistory = false }
+            }
+            Text("Latest 20 saved samples · selected battery").font(.caption).foregroundColor(.secondary)
+            if model.historyReadError {
+                Text("History could not be read.").foregroundColor(.secondary)
+            } else if model.recentHistory.isEmpty {
+                Text("No recorded samples yet.").foregroundColor(.secondary)
+            } else {
+                ForEach(model.recentHistory, id: \.capturedAt) { sample in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(sample.capturedAt, style: .date).font(.caption)
+                        Text(sample.capturedAt, style: .time).font(.caption)
+                        metric("Charge", number(sample.percentage, "%"))
+                        metric("Full-charge capacity", number(sample.maxCapacity, " mAh"))
+                        metric("Temperature", decimal(sample.temperatureCelsius, " °C"))
+                        metric("Current", number(sample.currentMilliamps, " mA"))
+                        metric("Cycles", number(sample.cycles))
+                        metric("AC / Charging", yesNo(sample.externalPower) + " / " + yesNo(sample.isCharging))
+                        Divider()
+                    }
+                }
             }
         }
     }
