@@ -28,13 +28,13 @@ public struct HistoryCapture {
         guard let last = last, let previous = lastUptime else { return true }
         guard uptime >= previous, sample.capturedAt > last.capturedAt else { return false }
         let elapsed = uptime - previous
-        return elapsed >= 60 || (elapsed >= 1 &&
+        return elapsed >= 1 && (
             (sample.externalPower != last.externalPower || sample.isCharging != last.isCharging ||
              sample.condition != last.condition || sample.percentage != last.percentage ||
              sample.cycles != last.cycles || sample.currentCapacity != last.currentCapacity ||
              sample.maxCapacity != last.maxCapacity || sample.designCapacity != last.designCapacity ||
              sample.temperatureCelsius != last.temperatureCelsius ||
-             sample.currentMilliamps != last.currentMilliamps || sample.voltageMillivolts != last.voltageMillivolts))
+             sample.currentMilliamps != last.currentMilliamps || sample.voltageMillivolts != last.voltageMillivolts)
     }
     public mutating func recorded(_ sample: BatterySnapshot, uptime: TimeInterval) {
         last = sample
