@@ -30,7 +30,7 @@ IOKit telemetry and user preferences are inputs; menu bar status, local settings
 
 ## Technical preferences and constraints
 
-Swift 5.7-compatible SwiftPM, SwiftUI/AppKit, IOKit, Command Line Tools, macOS 12 deployment target. No full Xcode, Codex or Cursor. Linux-only CI. Native compilation and hardware acceptance locally. Avoid unnecessary dependencies. The application stack profile is project-specific; reusable profiles are not assumed applicable. See decisions and README. Actual application commands are deferred to #4 because no scaffold exists yet; existing adapter commands are recorded in README.
+Swift 5.7-compatible SwiftPM, SwiftUI/AppKit, IOKit, Command Line Tools, macOS 12 deployment target. No full Xcode, Codex or Cursor. Linux-only CI. Native compilation and hardware acceptance locally. Avoid unnecessary dependencies. The application stack profile is project-specific; reusable profiles are not assumed applicable. See decisions and README. Application build, run, test and packaging commands are recorded in README; macOS execution requires local validation.
 
 ## Quality, security and privacy
 
@@ -90,12 +90,12 @@ See [scope](../project/scope.md) and [roadmap](../project/roadmap.md). Release g
 | All `deferred` items have reason and return trigger | recorded | See decision status |
 | Template customization complete | pass | Project-owned overlay, README and AGENTS customized; local doctor and leak check passed at c750a03 |
 | Stack profile selected or marked N/A | N/A | Project-specific stack guidance above |
-| Real project commands recorded | deferred | Greenfield exception; #4 owns actual application commands |
+| Real project commands recorded | recorded | README; native execution pending local owner validation |
 | Root README describes the product | recorded | README |
 | `AGENTS.md` describes repository role | recorded | AGENTS.md |
 | Bootstrap markers removed | pass | Reviewed tracked project definition files; no bootstrap placeholders remain in changed project documents |
 | License and ownership decided | recorded | Existing LICENSE |
 | CI, branch rules, and approvals decided | pass | #11 merged; Linux-only CI and owner review/merge rules recorded |
-| Project ready for first product task | conditional | Definition and local bootstrap checks passed; requires green final PR CI and owner merge of #12 before implementation |
+| Project ready for first product task | pass | Bootstrap CI passed, PR #12 merged and #2 closed; hardware control remains gated by #3 |
 
 Product implementation is not authorized by this document alone. Readiness must be confirmed before product work.
