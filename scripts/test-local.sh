@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 build="$PWD/.build/manual-tests"
 mkdir -p "$build"
-swiftc -parse-as-library -whole-module-optimization -emit-object -emit-module \
+swiftc -I Sources/CSQLite -parse-as-library -whole-module-optimization -emit-object -emit-module \
   -module-name DurlyCore -emit-module-path "$build/DurlyCore.swiftmodule" \
   Sources/DurlyCore/*.swift -o "$build/DurlyCore.o"
 # Generate the standalone entry point from the XCTest method declarations.
@@ -23,6 +23,6 @@ fi
   printf '    print("PASS: %s Durly core tests")\n' "$count"
   printf '%s\n' '  }' '}'
 } > "$runner"
-swiftc -D MANUAL_TESTS -parse-as-library -I "$build" \
-  Tests/DurlyCoreTests/*.swift "$runner" "$build/DurlyCore.o" -o "$build/tests"
+swiftc -I Sources/CSQLite -D MANUAL_TESTS -parse-as-library -I "$build" \
+  Tests/DurlyCoreTests/*.swift "$runner" "$build/DurlyCore.o" -lsqlite3 -o "$build/tests"
 "$build/tests"
