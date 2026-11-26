@@ -101,6 +101,19 @@ final class BatteryTests: XCTestCase {
         XCTAssertEqual(store.load(), DisplaySettings(showPercentage: false, showDetails: true))
     }
 
+    func testBatteryHealthPresentationSeverity() {
+        XCTAssertEqual(BatteryHealthSeverity.classify(" Normal "), .normal)
+        XCTAssertEqual(BatteryHealthSeverity.classify("Good"), .normal)
+        XCTAssertEqual(BatteryHealthSeverity.classify("Check Battery"), .warning)
+        XCTAssertEqual(BatteryHealthSeverity.classify("Replace Soon"), .warning)
+        XCTAssertEqual(BatteryHealthSeverity.classify("Service Recommended"), .service)
+        XCTAssertEqual(BatteryHealthSeverity.classify("Poor"), .service)
+        XCTAssertEqual(BatteryHealthSeverity.classify("Replace Now"), .service)
+        XCTAssertEqual(BatteryHealthSeverity.classify("unrecognized"), .unknown)
+        XCTAssertEqual(BatteryHealthSeverity.classify(" "), .unknown)
+        XCTAssertEqual(BatteryHealthSeverity.classify(nil), .unknown)
+    }
+
     private final class MockProvider: BatteryProvider {
         let value: BatterySnapshot
         var shouldFail = false
